@@ -226,9 +226,9 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 
 ## 📧 Contacto
 
-**Tu Nombre** - [@tu_twitter](https://twitter.com/tu_twitter) - tuemail@ejemplo.com
+**Jose Aurelio Cañete Rios** - joseaureliocaneterios231704@gmail.com
 
-Link del Proyecto: [https://github.com/tu-usuario/dialysis-tracker](https://github.com/tu-usuario/dialysis-tracker)
+Link del Proyecto: [https://github.com/pepilloAgricola/Dialisisperitoneal](https://github.com/pepilloAgricola/Dialisisperitoneal)
 
 ---
 
