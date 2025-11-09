@@ -1,14 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { Card, Searchbar, Text, Chip, Divider } from 'react-native-paper';
-import { DailyRecord } from '../types/index.js';
-import { getAllRecords } from '../utils/storage';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { Card, Searchbar, Text, Chip, Divider, IconButton, Portal, Dialog, Button, TextInput } from 'react-native-paper';
+import { DailyRecord, DialysisRecord, BagType } from '../types/index.js';
+import { getAllRecords, deleteRecord, updateRecord } from '../utils/storage';
 
 export const HistoryScreen = () => {
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredRecords, setFilteredRecords] = useState<DailyRecord[]>([]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  
+  // Estados para edición
+  const [editingRecord, setEditingRecord] = useState<DialysisRecord | null>(null);
+  const [editDialogVisible, setEditDialogVisible] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    bagType: 1.5 as BagType,
+    drainage: '',
+    observations: ''
+  });
 
   useEffect(() => {
     loadRecords();
@@ -17,7 +26,6 @@ export const HistoryScreen = () => {
   const loadRecords = async () => {
     const allRecords = await getAllRecords();
     const recordsArray = Object.values(allRecords);
-    // Sort by date in descending order (most recent first)
     recordsArray.sort((a: DailyRecord, b: DailyRecord) => 
       new Date(b.date).getTime() - new Date(a.date).getTime()
     );
@@ -48,14 +56,81 @@ export const HistoryScreen = () => {
     setExpandedDays(newExpanded);
   };
 
+  const handleDeleteSession = (record: DialysisRecord) => {
+    Alert.alert(
+      'Eliminar Sesión',
+      '¿Estás seguro de que deseas eliminar esta sesión de diálisis?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteRecord(record.id);
+              await loadRecords();
+              Alert.alert('Éxito', 'Sesión eliminada correctamente');
+            } catch (error) {
+              Alert.alert('Error', 'No se pudo eliminar la sesión');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleEditSession = (record: DialysisRecord) => {
+    setEditingRecord(record);
+    setEditFormData({
+      bagType: record.bagType,
+      drainage: record.drainage.toString(),
+      observations: record.observations || ''
+    });
+    setEditDialogVisible(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingRecord) return;
+
+    if (!editFormData.drainage) {
+      Alert.alert('Campo requerido', 'Por favor ingrese la cantidad de drenaje');
+      return;
+    }
+
+    const drainage = parseFloat(editFormData.drainage);
+    if (isNaN(drainage)) {
+      Alert.alert('Error', 'La cantidad de drenaje debe ser un número válido');
+      return;
+    }
+
+    const balance = drainage - editingRecord.infusion;
+
+    const updatedRecord: DialysisRecord = {
+      ...editingRecord,
+      bagType: editFormData.bagType,
+      drainage: drainage,
+      balance: balance,
+      observations: editFormData.observations
+    };
+
+    try {
+      await updateRecord(updatedRecord);
+      await loadRecords();
+      setEditDialogVisible(false);
+      setEditingRecord(null);
+      Alert.alert('Éxito', 'Sesión actualizada correctamente');
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo actualizar la sesión');
+    }
+  };
+
   const getBalanceColor = (balance: number): string => {
-    if (balance > 0) return '#4CAF50'; // Verde
-    if (balance < 0) return '#F44336'; // Rojo
-    return '#757575'; // Gris
+    if (balance > 0) return '#4CAF50';
+    if (balance < 0) return '#F44336';
+    return '#757575';
   };
 
   const formatDate = (dateString: string) => {
-    // Parseamos la fecha como UTC para evitar problemas de zona horaria
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(Date.UTC(year, month - 1, day));
     return date.toLocaleDateString('es-ES', { 
@@ -102,7 +177,7 @@ export const HistoryScreen = () => {
         {filteredRecords.length === 0 ? (
           <Card style={styles.emptyCard}>
             <Card.Content style={styles.emptyContent}>
-              <Text variant="displaySmall" style={styles.emptyIcon}>🔍</Text>
+              <Text variant="displaySmall" style={styles.emptyIcon}>📋</Text>
               <Text variant="titleLarge" style={styles.emptyTitle}>
                 No hay registros
               </Text>
@@ -124,7 +199,6 @@ export const HistoryScreen = () => {
                   activeOpacity={0.7}
                 >
                   <Card.Content>
-                    {/* Vista Colapsada - Siempre visible */}
                     <View style={styles.collapsedView}>
                       <View style={styles.dayHeaderRow}>
                         <View style={styles.dayInfo}>
@@ -160,7 +234,6 @@ export const HistoryScreen = () => {
                       </View>
                     </View>
 
-                    {/* Vista Expandida - Solo cuando isExpanded es true */}
                     {isExpanded && (
                       <>
                         <Divider style={styles.expandDivider} />
@@ -188,12 +261,28 @@ export const HistoryScreen = () => {
                                     🕐 {formatTime(record.timestamp)}
                                   </Text>
                                 </View>
-                                <Chip 
-                                  style={styles.concentrationChip}
-                                  textStyle={styles.concentrationText}
-                                >
-                                  {record.bagType}%
-                                </Chip>
+                                <View style={styles.sessionActions}>
+                                  <Chip 
+                                    style={styles.concentrationChip}
+                                    textStyle={styles.concentrationText}
+                                  >
+                                    {record.bagType}%
+                                  </Chip>
+                                  <IconButton
+                                    icon="pencil"
+                                    size={20}
+                                    iconColor="#1976D2"
+                                    onPress={() => handleEditSession(record)}
+                                    style={styles.actionButton}
+                                  />
+                                  <IconButton
+                                    icon="delete"
+                                    size={20}
+                                    iconColor="#F44336"
+                                    onPress={() => handleDeleteSession(record)}
+                                    style={styles.actionButton}
+                                  />
+                                </View>
                               </View>
 
                               <View style={styles.sessionData}>
@@ -244,6 +333,55 @@ export const HistoryScreen = () => {
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
+
+      {/* Dialog de Edición */}
+      <Portal>
+        <Dialog visible={editDialogVisible} onDismiss={() => setEditDialogVisible(false)}>
+          <Dialog.Title>Editar Sesión</Dialog.Title>
+          <Dialog.Content>
+            <Text style={styles.dialogLabel}>Concentración</Text>
+            <View style={styles.concentrationButtons}>
+              {[1.5, 2.5, 4.5].map((concentration) => (
+                <Chip
+                  key={concentration}
+                  selected={editFormData.bagType === concentration}
+                  onPress={() => setEditFormData({ ...editFormData, bagType: concentration as BagType })}
+                  style={[
+                    styles.concentrationOption,
+                    editFormData.bagType === concentration && styles.concentrationOptionSelected
+                  ]}
+                  textStyle={styles.concentrationOptionText}
+                >
+                  {concentration}%
+                </Chip>
+              ))}
+            </View>
+
+            <TextInput
+              label="Drenaje (ml)"
+              value={editFormData.drainage}
+              onChangeText={(value) => setEditFormData({ ...editFormData, drainage: value })}
+              keyboardType="numeric"
+              mode="outlined"
+              style={styles.dialogInput}
+            />
+
+            <TextInput
+              label="Observaciones (opcional)"
+              value={editFormData.observations}
+              onChangeText={(value) => setEditFormData({ ...editFormData, observations: value })}
+              multiline
+              numberOfLines={3}
+              mode="outlined"
+              style={styles.dialogInput}
+            />
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setEditDialogVisible(false)}>Cancelar</Button>
+            <Button onPress={handleSaveEdit}>Guardar</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 };
@@ -398,6 +536,11 @@ const styles = StyleSheet.create({
     color: '#546E7A',
     fontWeight: '500',
   },
+  sessionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   concentrationChip: {
     backgroundColor: '#FFF3E0',
     height: 28,
@@ -406,6 +549,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#E65100',
     fontWeight: '700',
+  },
+  actionButton: {
+    margin: 0,
   },
   sessionData: {
     gap: 12,
@@ -469,5 +615,29 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 20,
+  },
+  dialogLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#546E7A',
+    marginBottom: 8,
+    marginTop: 8,
+  },
+  concentrationButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  concentrationOption: {
+    flex: 1,
+  },
+  concentrationOptionSelected: {
+    backgroundColor: '#1976D2',
+  },
+  concentrationOptionText: {
+    fontWeight: '600',
+  },
+  dialogInput: {
+    marginBottom: 12,
   },
 });

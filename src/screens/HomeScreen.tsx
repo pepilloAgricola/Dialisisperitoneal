@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -18,8 +18,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { BagType, DialysisRecord } from '../types/index.js';
 import { saveRecord } from '../utils/storage';
-
-const DEFAULT_INFUSION = 2000;
+import { getSettings } from '../utils/settingsStorage';
 
 interface DialysisEntry {
   bagType: BagType;
@@ -34,6 +33,16 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
     { bagType: 1.5, drainage: '', observations: '' },
   ]);
   const [showConcentrationPicker, setShowConcentrationPicker] = useState<number | null>(null);
+  const [defaultInfusion, setDefaultInfusion] = useState(2000);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    const settings = await getSettings();
+    setDefaultInfusion(settings.defaultInfusion);
+  };
 
   const addEntry = () => {
     if (entries.length < 4) {
@@ -58,7 +67,7 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
 
   const calculateBalance = (drainage: string): number => {
     const drainageNum = parseFloat(drainage);
-    return isNaN(drainageNum) ? 0 : drainageNum - DEFAULT_INFUSION;
+    return isNaN(drainageNum) ? 0 : drainageNum - defaultInfusion;
   };
 
   const getTotalBalance = (): number => {
@@ -68,9 +77,9 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
   };
 
   const getBalanceColor = (balance: number): string => {
-    if (balance > 0) return '#4CAF50'; // Verde
-    if (balance < 0) return '#F44336'; // Rojo
-    return '#757575'; // Gris
+    if (balance > 0) return '#4CAF50';
+    if (balance < 0) return '#F44336';
+    return '#757575';
   };
 
   const saveEntries = async () => {
@@ -81,28 +90,21 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
           return;
         }
 
-        // Usar métodos UTC para evitar problemas de zona horaria
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(date.getUTCDate()).padStart(2, '0');
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
         const dateOnly = `${year}-${month}-${day}`;
         
-        console.log('Fecha original:', date);
-        console.log('Fecha formateada:', dateOnly);
-        
-        // Hora actual para el timestamp
         const now = new Date();
         const hours = String(now.getHours()).padStart(2, '0');
         const minutes = String(now.getMinutes()).padStart(2, '0');
         const seconds = String(now.getSeconds()).padStart(2, '0');
         const timestamp = `${dateOnly}T${hours}:${minutes}:${seconds}`;
-        
-        console.log('Timestamp final:', timestamp);
 
         const record: DialysisRecord = {
-          id: Date.now().toString() + Math.random(), // Asegurar IDs únicos
+          id: Date.now().toString() + Math.random(),
           bagType: entry.bagType,
-          infusion: DEFAULT_INFUSION,
+          infusion: defaultInfusion,
           drainage: parseFloat(entry.drainage),
           balance: calculateBalance(entry.drainage),
           observations: entry.observations,
@@ -117,45 +119,6 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
     } catch (error) {
       Alert.alert('Error', 'Error al guardar los registros');
     }
-  };
-
-  const ConcentrationPicker = ({ index }: { index: number }) => {
-    if (!entries[index]) return null;
-    
-    return (
-      <Modal
-        visible={showConcentrationPicker === index}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowConcentrationPicker(null)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowConcentrationPicker(null)}
-        >
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Seleccionar Concentración</Text>
-            <Divider style={styles.modalDivider} />
-            {[1.5, 2.5, 4.5].map((concentration) => (
-              <TouchableOpacity
-                key={concentration}
-                style={styles.modalOption}
-                onPress={() => {
-                  updateEntry(index, 'bagType', concentration as BagType);
-                  setShowConcentrationPicker(null);
-                }}
-              >
-                <Text style={styles.modalOptionText}>{concentration}%</Text>
-                {entries[index].bagType === concentration && (
-                  <Text style={styles.checkmark}>✓</Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    );
   };
 
   return (
@@ -190,9 +153,6 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
           onChange={(event: any, selectedDate?: Date) => {
             setShowDatePicker(false);
             if (selectedDate) {
-              console.log('Fecha seleccionada:', selectedDate);
-              console.log('Fecha ISO:', selectedDate.toISOString());
-              console.log('Fecha Local:', selectedDate.toLocaleDateString());
               setDate(selectedDate);
             }
           }}
@@ -229,6 +189,7 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
               <TouchableOpacity
                 style={styles.selectButton}
                 onPress={() => setShowConcentrationPicker(index)}
+                activeOpacity={0.7}
               >
                 <Text style={styles.selectText}>{entry.bagType}%</Text>
                 <Text style={styles.selectArrow}>▼</Text>
@@ -242,7 +203,7 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
                 value={entry.drainage}
                 onChangeText={(value: string) => updateEntry(index, 'drainage', value)}
                 keyboardType="numeric"
-                placeholder="2000"
+                placeholder={defaultInfusion.toString()}
                 mode="outlined"
                 style={styles.numericInput}
                 contentStyle={styles.inputContent}
@@ -274,8 +235,6 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
               style={styles.observationsInput}
             />
           </Card.Content>
-
-          <ConcentrationPicker index={index} />
         </Card>
       ))}
 
@@ -331,6 +290,48 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
       </View>
 
       <View style={styles.bottomSpacer} />
+
+      {/* Modal de Concentración */}
+      {showConcentrationPicker !== null && (
+        <Modal
+          visible={true}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowConcentrationPicker(null)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowConcentrationPicker(null)}
+          >
+            <TouchableOpacity 
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>Seleccionar Concentración</Text>
+                <Divider style={styles.modalDivider} />
+                {[1.5, 2.5, 4.5].map((concentration) => (
+                  <TouchableOpacity
+                    key={concentration}
+                    style={styles.modalOption}
+                    onPress={() => {
+                      updateEntry(showConcentrationPicker, 'bagType', concentration as BagType);
+                      setShowConcentrationPicker(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.modalOptionText}>{concentration}%</Text>
+                    {entries[showConcentrationPicker]?.bagType === concentration && (
+                      <Text style={styles.checkmark}>✓</Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </ScrollView>
   );
 };
@@ -507,10 +508,13 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    width: '80%',
-    maxWidth: 300,
+    width: 300,
     padding: 20,
     elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
   modalTitle: {
     fontSize: 18,
