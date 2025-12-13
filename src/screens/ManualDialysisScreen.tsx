@@ -1,52 +1,30 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  ScrollView,
-  StyleSheet,
-  Alert,
-  TouchableOpacity,
-  Modal,
-} from 'react-native';
-import {
-  Button,
-  Text,
-  TextInput,
-  Card,
-  Divider,
-  IconButton,
-} from 'react-native-paper';
+import React, { useState } from 'react';
+import { View, ScrollView, StyleSheet, Alert, TouchableOpacity, Modal } from 'react-native';
+import { Button, Text, TextInput, Card, Divider, IconButton } from 'react-native-paper';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { BagType, DialysisRecord } from '../types/index.js';
+import { BagType, DialysisRecord } from '../types/index';
 import { saveRecord } from '../utils/storage';
-import { getSettings } from '../utils/settingsStorage';
+import { useAppTheme } from '../utils/ThemeContext';
 
 interface DialysisEntry {
   bagType: BagType;
+  infusion: string;
   drainage: string;
   observations: string;
 }
 
 export const HomeScreen = ({ navigation }: { navigation: any }) => {
+  const { theme } = useAppTheme();
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [entries, setEntries] = useState<DialysisEntry[]>([
-    { bagType: 1.5, drainage: '', observations: '' },
+    { bagType: 1.5, infusion: '2000', drainage: '', observations: '' },
   ]);
   const [showConcentrationPicker, setShowConcentrationPicker] = useState<number | null>(null);
-  const [defaultInfusion, setDefaultInfusion] = useState(2000);
-
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
-    const settings = await getSettings();
-    setDefaultInfusion(settings.defaultInfusion);
-  };
 
   const addEntry = () => {
     if (entries.length < 4) {
-      setEntries([...entries, { bagType: 1.5, drainage: '', observations: '' }]);
+      setEntries([...entries, { bagType: 1.5, infusion: '2000', drainage: '', observations: '' }]);
     } else {
       Alert.alert('Límite alcanzado', 'Máximo 4 diálisis por día');
     }
@@ -65,28 +43,29 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
     setEntries(newEntries);
   };
 
-  const calculateBalance = (drainage: string): number => {
-    const drainageNum = parseFloat(drainage);
-    return isNaN(drainageNum) ? 0 : drainageNum - defaultInfusion;
+  const calculateBalance = (infusion: string, drainage: string): number => {
+    const infusionNum = parseFloat(infusion) || 0;
+    const drainageNum = parseFloat(drainage) || 0;
+    return drainageNum - infusionNum;
   };
 
   const getTotalBalance = (): number => {
     return entries.reduce((sum, entry) => {
-      return sum + calculateBalance(entry.drainage);
+      return sum + calculateBalance(entry.infusion, entry.drainage);
     }, 0);
   };
 
   const getBalanceColor = (balance: number): string => {
-    if (balance > 0) return '#4CAF50';
-    if (balance < 0) return '#F44336';
-    return '#757575';
+    if (balance > 0) return theme.colors.success;
+    if (balance < 0) return theme.colors.error;
+    return theme.colors.outline;
   };
 
   const saveEntries = async () => {
     try {
       for (const entry of entries) {
-        if (!entry.drainage) {
-          Alert.alert('Campo requerido', 'Por favor ingrese la cantidad de drenaje');
+        if (!entry.infusion || !entry.drainage) {
+          Alert.alert('Campos requeridos', 'Por favor ingrese infusión y drenaje');
           return;
         }
 
@@ -101,12 +80,16 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
         const seconds = String(now.getSeconds()).padStart(2, '0');
         const timestamp = `${dateOnly}T${hours}:${minutes}:${seconds}`;
 
+        const infusionNum = parseFloat(entry.infusion);
+        const drainageNum = parseFloat(entry.drainage);
+
         const record: DialysisRecord = {
           id: Date.now().toString() + Math.random(),
+          type: 'manual',
           bagType: entry.bagType,
-          infusion: defaultInfusion,
-          drainage: parseFloat(entry.drainage),
-          balance: calculateBalance(entry.drainage),
+          infusion: infusionNum,
+          drainage: drainageNum,
+          balance: drainageNum - infusionNum,
           observations: entry.observations,
           timestamp: timestamp,
         };
@@ -115,11 +98,13 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
       }
 
       Alert.alert('Registro exitoso', 'Los datos han sido guardados correctamente');
-      setEntries([{ bagType: 1.5, drainage: '', observations: '' }]);
+      setEntries([{ bagType: 1.5, infusion: '2000', drainage: '', observations: '' }]);
     } catch (error) {
       Alert.alert('Error', 'Error al guardar los registros');
     }
   };
+
+  const styles = createStyles(theme);
 
   return (
     <ScrollView style={styles.container}>
@@ -161,7 +146,7 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
 
       {/* Sesiones de Diálisis */}
       <Text variant="titleMedium" style={styles.sectionTitle}>
-        💧 Sesiones de Diálisis
+        💧 Sesiones de Diálisis Manual (CAPD)
       </Text>
 
       {entries.map((entry, index) => (
@@ -196,14 +181,28 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
               </TouchableOpacity>
             </View>
 
+            {/* Infusión Input - AHORA EDITABLE */}
+            <View style={styles.fieldContainer}>
+              <Text style={styles.fieldLabel}>💉 Infusión (ml)</Text>
+              <TextInput
+                value={entry.infusion}
+                onChangeText={(value: string) => updateEntry(index, 'infusion', value)}
+                keyboardType="numeric"
+                placeholder="2000"
+                mode="outlined"
+                style={styles.numericInput}
+                contentStyle={styles.inputContent}
+              />
+            </View>
+
             {/* Drenaje Input */}
             <View style={styles.fieldContainer}>
-              <Text style={styles.fieldLabel}>Drenaje (ml)</Text>
+              <Text style={styles.fieldLabel}>🧪 Drenaje (ml)</Text>
               <TextInput
                 value={entry.drainage}
                 onChangeText={(value: string) => updateEntry(index, 'drainage', value)}
                 keyboardType="numeric"
-                placeholder={defaultInfusion.toString()}
+                placeholder="2000"
                 mode="outlined"
                 style={styles.numericInput}
                 contentStyle={styles.inputContent}
@@ -216,11 +215,11 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
               <Text
                 style={[
                   styles.balanceValue,
-                  { color: getBalanceColor(calculateBalance(entry.drainage)) },
+                  { color: getBalanceColor(calculateBalance(entry.infusion, entry.drainage)) },
                 ]}
               >
-                {calculateBalance(entry.drainage) > 0 ? '+' : ''}
-                {calculateBalance(entry.drainage)} ml
+                {calculateBalance(entry.infusion, entry.drainage) > 0 ? '+' : ''}
+                {calculateBalance(entry.infusion, entry.drainage)} ml
               </Text>
             </View>
 
@@ -336,16 +335,17 @@ export const HomeScreen = ({ navigation }: { navigation: any }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: theme.colors.background,
     padding: 12,
   },
   dateCard: {
     marginBottom: 16,
     borderRadius: 12,
     elevation: 2,
+    backgroundColor: theme.colors.surface,
   },
   dateContent: {
     paddingVertical: 12,
@@ -355,7 +355,7 @@ const styles = StyleSheet.create({
   },
   dateLabel: {
     fontWeight: '600',
-    color: '#1976D2',
+    color: theme.colors.primary,
   },
   dateButton: {
     borderRadius: 8,
@@ -367,12 +367,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 4,
     fontWeight: '600',
-    color: '#37474F',
+    color: theme.colors.onBackground,
   },
   sessionCard: {
     marginBottom: 12,
     borderRadius: 12,
     elevation: 3,
+    backgroundColor: theme.colors.surface,
   },
   sessionHeader: {
     flexDirection: 'row',
@@ -382,13 +383,14 @@ const styles = StyleSheet.create({
   },
   sessionNumber: {
     fontWeight: '600',
-    color: '#1976D2',
+    color: theme.colors.primary,
   },
   deleteButton: {
     margin: 0,
   },
   divider: {
     marginBottom: 16,
+    backgroundColor: theme.colors.outline,
   },
   fieldContainer: {
     marginBottom: 16,
@@ -396,16 +398,16 @@ const styles = StyleSheet.create({
   fieldLabel: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#546E7A',
+    color: theme.colors.outline,
     marginBottom: 6,
   },
   selectButton: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
-    borderColor: '#B0BEC5',
+    borderColor: theme.colors.outline,
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -413,15 +415,15 @@ const styles = StyleSheet.create({
   },
   selectText: {
     fontSize: 16,
-    color: '#263238',
+    color: theme.colors.onSurface,
     fontWeight: '500',
   },
   selectArrow: {
     fontSize: 12,
-    color: '#78909C',
+    color: theme.colors.outline,
   },
   numericInput: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     minHeight: 50,
   },
   inputContent: {
@@ -431,7 +433,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#ECEFF1',
+    backgroundColor: theme.colors.surfaceVariant,
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
@@ -439,14 +441,14 @@ const styles = StyleSheet.create({
   balanceLabel: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#546E7A',
+    color: theme.colors.onSurfaceVariant,
   },
   balanceValue: {
     fontSize: 18,
     fontWeight: '700',
   },
   observationsInput: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     marginTop: 4,
   },
   addButton: {
@@ -454,6 +456,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 2,
     borderStyle: 'dashed',
+    borderColor: theme.colors.primary,
   },
   addButtonContent: {
     paddingVertical: 8,
@@ -469,7 +472,7 @@ const styles = StyleSheet.create({
   },
   totalLabel: {
     fontWeight: '600',
-    color: '#546E7A',
+    color: theme.colors.outline,
     marginBottom: 8,
   },
   totalValue: {
@@ -492,6 +495,7 @@ const styles = StyleSheet.create({
   },
   historyButton: {
     borderRadius: 10,
+    borderColor: theme.colors.primary,
   },
   historyButtonContent: {
     paddingVertical: 10,
@@ -506,7 +510,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     width: 300,
     padding: 20,
@@ -519,7 +523,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#263238',
+    color: theme.colors.onSurface,
     marginBottom: 12,
     textAlign: 'center',
   },
@@ -536,11 +540,11 @@ const styles = StyleSheet.create({
   },
   modalOptionText: {
     fontSize: 16,
-    color: '#263238',
+    color: theme.colors.onSurface,
   },
   checkmark: {
     fontSize: 20,
-    color: '#1976D2',
+    color: theme.colors.primary,
     fontWeight: '700',
   },
 });

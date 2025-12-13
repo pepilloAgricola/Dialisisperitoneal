@@ -1,21 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Alert } from 'react-native';
-import { Card, Text, TextInput, Button, Divider, Switch, List } from 'react-native-paper';
+import { Card, Text, Button, Divider, Switch, List } from 'react-native-paper';
 import { getSettings, saveSettings, Settings } from '../utils/settingsStorage';
 import { clearAllRecords } from '../utils/storage';
+import { useAppTheme } from '../utils/ThemeContext';
 
 export const SettingsScreen = () => {
+  const { theme, isDarkMode, toggleTheme } = useAppTheme();
   const [settings, setSettings] = useState<Settings>({
-    defaultInfusion: 2000,
-    minHealthyBalance: -500,
-    maxHealthyBalance: 500,
     notificationsEnabled: false,
     darkMode: false,
   });
-
-  const [tempInfusion, setTempInfusion] = useState('2000');
-  const [tempMinBalance, setTempMinBalance] = useState('-500');
-  const [tempMaxBalance, setTempMaxBalance] = useState('500');
 
   useEffect(() => {
     loadSettings();
@@ -24,58 +19,29 @@ export const SettingsScreen = () => {
   const loadSettings = async () => {
     const savedSettings = await getSettings();
     setSettings(savedSettings);
-    setTempInfusion(savedSettings.defaultInfusion.toString());
-    setTempMinBalance(savedSettings.minHealthyBalance.toString());
-    setTempMaxBalance(savedSettings.maxHealthyBalance.toString());
   };
 
-  const handleSaveSettings = async () => {
-    const infusion = parseFloat(tempInfusion);
-    const minBalance = parseFloat(tempMinBalance);
-    const maxBalance = parseFloat(tempMaxBalance);
+  // Evita render si theme no está listo (previene crash por undefined en estilos)
+  if (!theme) {
+    return null;
+  }
 
-    if (isNaN(infusion) || infusion <= 0) {
-      Alert.alert('Error', 'La infusión debe ser un número válido mayor a 0');
-      return;
-    }
-
-    if (isNaN(minBalance) || isNaN(maxBalance)) {
-      Alert.alert('Error', 'Los rangos de balance deben ser números válidos');
-      return;
-    }
-
-    if (minBalance >= maxBalance) {
-      Alert.alert('Error', 'El balance mínimo debe ser menor que el máximo');
-      return;
-    }
-
-    const newSettings: Settings = {
-      ...settings,
-      defaultInfusion: infusion,
-      minHealthyBalance: minBalance,
-      maxHealthyBalance: maxBalance,
-    };
-
-    const success = await saveSettings(newSettings);
-    if (success) {
-      setSettings(newSettings);
-      Alert.alert('Éxito', 'Configuración guardada correctamente');
-    } else {
-      Alert.alert('Error', 'No se pudo guardar la configuración');
-    }
-  };
+  const styles = createStyles(theme);
 
   const handleToggleNotifications = async (value: boolean) => {
     const newSettings = { ...settings, notificationsEnabled: value };
     setSettings(newSettings);
     await saveSettings(newSettings);
+    if (value) {
+      Alert.alert('Notificaciones', 'Las notificaciones están habilitadas. Recibirás recordatorios para tus sesiones.');
+    }
   };
 
-  const handleToggleDarkMode = async (value: boolean) => {
-    const newSettings = { ...settings, darkMode: value };
+  const handleToggleDarkMode = async () => {
+    toggleTheme(); // Usa el contexto de tema
+    const newSettings = { ...settings, darkMode: !isDarkMode };
     setSettings(newSettings);
     await saveSettings(newSettings);
-    Alert.alert('Modo Oscuro', 'Esta función estará disponible en una próxima actualización');
   };
 
   const handleClearAllData = () => {
@@ -100,176 +66,100 @@ export const SettingsScreen = () => {
     );
   };
 
-  const handleResetSettings = () => {
+  const handleExportData = () => {
     Alert.alert(
-      'Restablecer Configuración',
-      '¿Deseas restablecer la configuración a los valores predeterminados?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Restablecer',
-          onPress: () => {
-            setTempInfusion('2000');
-            setTempMinBalance('-500');
-            setTempMaxBalance('500');
-            Alert.alert('Éxito', 'Configuración restablecida. Presiona "Guardar Cambios" para aplicar.');
-          }
-        }
-      ]
+      'Exportar Datos',
+      'Esta función estará disponible en una próxima actualización. Permitirá exportar todos tus registros a un archivo CSV.',
+      [{ text: 'Entendido' }]
     );
   };
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text variant="headlineSmall" style={styles.title}>
+        <Text variant="headlineMedium" style={styles.title}>
           ⚙️ Configuración
         </Text>
         <Text variant="bodyMedium" style={styles.subtitle}>
-          Personaliza tu aplicación de diálisis
+          Personaliza tu experiencia
         </Text>
       </View>
-
-      {/* Configuración de Infusión */}
-      <Card style={styles.card} mode="elevated">
-        <Card.Content>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            💉 Valores Predeterminados
-          </Text>
-          <Divider style={styles.divider} />
-
-          <Text style={styles.fieldLabel}>Infusión predeterminada (ml)</Text>
-          <TextInput
-            value={tempInfusion}
-            onChangeText={setTempInfusion}
-            keyboardType="numeric"
-            mode="outlined"
-            placeholder="2000"
-            style={styles.input}
-            left={<TextInput.Icon icon="water" />}
-          />
-          <Text style={styles.helpText}>
-            Este valor se usará por defecto al registrar nuevas sesiones
-          </Text>
-        </Card.Content>
-      </Card>
-
-      {/* Rangos de Balance Saludable */}
-      <Card style={styles.card} mode="elevated">
-        <Card.Content>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            📊 Rangos de Balance Saludable
-          </Text>
-          <Divider style={styles.divider} />
-
-          <Text style={styles.fieldLabel}>Balance mínimo saludable (ml)</Text>
-          <TextInput
-            value={tempMinBalance}
-            onChangeText={setTempMinBalance}
-            keyboardType="numeric"
-            mode="outlined"
-            placeholder="-500"
-            style={styles.input}
-            left={<TextInput.Icon icon="arrow-down" />}
-          />
-
-          <Text style={styles.fieldLabel}>Balance máximo saludable (ml)</Text>
-          <TextInput
-            value={tempMaxBalance}
-            onChangeText={setTempMaxBalance}
-            keyboardType="numeric"
-            mode="outlined"
-            placeholder="500"
-            style={styles.input}
-            left={<TextInput.Icon icon="arrow-up" />}
-          />
-
-          <Text style={styles.helpText}>
-            Los valores fuera de este rango se destacarán visualmente
-          </Text>
-        </Card.Content>
-      </Card>
-
-      {/* Botón Guardar */}
-      <Button
-        mode="contained"
-        onPress={handleSaveSettings}
-        icon="content-save"
-        style={styles.saveButton}
-        contentStyle={styles.saveButtonContent}
-      >
-        Guardar Cambios
-      </Button>
 
       {/* Preferencias */}
       <Card style={styles.card} mode="elevated">
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            🔔 Preferencias
+            📱 Preferencias
           </Text>
           <Divider style={styles.divider} />
 
           <List.Item
             title="Notificaciones"
             description="Recordatorios para sesiones de diálisis"
-            left={() => <List.Icon icon="bell" />}
+            left={() => <List.Icon icon="bell-outline" />}
             right={() => (
               <Switch
-                value={settings.notificationsEnabled}
+                value={settings.notificationsEnabled === true}
                 onValueChange={handleToggleNotifications}
               />
             )}
+            style={styles.listItem}
           />
 
-          <Divider />
-
           <List.Item
-            title="Modo Oscuro"
-            description="Tema oscuro para la aplicación (próximamente)"
+            title="Modo oscuro"
+            description="Apariencia nocturna"
             left={() => <List.Icon icon="weather-night" />}
             right={() => (
               <Switch
-                value={settings.darkMode}
+                value={isDarkMode === true}
                 onValueChange={handleToggleDarkMode}
-                disabled
               />
             )}
+            style={styles.listItem}
           />
+
+          <Text style={styles.helpText}>
+            Las notificaciones requieren permisos de la app. El modo oscuro ahorra batería en pantallas OLED.
+          </Text>
         </Card.Content>
       </Card>
 
-      {/* Datos */}
+      {/* Datos y Privacidad */}
       <Card style={styles.card} mode="elevated">
         <Card.Content>
           <Text variant="titleMedium" style={styles.sectionTitle}>
-            💾 Datos
+            🔒 Datos y Privacidad
           </Text>
           <Divider style={styles.divider} />
 
           <Button
             mode="outlined"
-            onPress={handleResetSettings}
-            icon="restore"
+            onPress={handleExportData}
+            icon="file-export-outline"
             style={styles.actionButton}
             contentStyle={styles.actionButtonContent}
           >
-            Restablecer Configuración
+            Exportar Datos
           </Button>
 
           <Button
-            mode="contained"
+            mode="outlined"
             onPress={handleClearAllData}
-            icon="delete-forever"
+            icon="delete-outline"
             style={[styles.actionButton, styles.dangerButton]}
             contentStyle={styles.actionButtonContent}
-            buttonColor="#F44336"
+            textColor={theme.colors.error}
           >
-            Eliminar Todos los Registros
+            Eliminar Todos los Datos
           </Button>
 
-          <Text style={styles.warningText}>
-            ⚠️ La eliminación de registros es permanente y no se puede deshacer
-          </Text>
+          <View style={styles.warningBox}>
+            <Text style={styles.warningIcon}>⚠️</Text>
+            <Text style={styles.warningText}>
+              Tus datos se almacenan localmente en tu dispositivo. No se comparten con terceros.
+            </Text>
+          </View>
         </Card.Content>
       </Card>
 
@@ -286,10 +176,45 @@ export const SettingsScreen = () => {
             <Text style={styles.infoValue}>1.0.0</Text>
           </View>
 
+          <Divider style={styles.infoDivider} />
+
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Desarrollado para</Text>
-            <Text style={styles.infoValue}>Pacientes en Diálisis Peritoneal</Text>
+            <Text style={styles.infoLabel}>Desarrollado por</Text>
+            <View style={styles.infoValueContainer}>
+              <Text style={styles.infoValue}>Jose Aurelio Cañete Rios</Text>
+            </View>
           </View>
+
+          <Divider style={styles.infoDivider} />
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Contacto</Text>
+            <View style={styles.infoValueContainer}>
+              <Text style={styles.infoValue}>joseaureliocaneterios231704@gmail.com</Text>
+            </View>
+          </View>
+        </Card.Content>
+      </Card>
+
+      {/* Sobre la App */}
+      <Card style={styles.aboutCard} mode="outlined">
+        <Card.Content>
+          <Text variant="titleMedium" style={styles.sectionTitle}>
+            📱 Sobre Dialysis Tracker
+          </Text>
+          <Divider style={styles.divider} />
+
+          <Text style={styles.aboutText}>
+            Aplicación diseñada para pacientes en diálisis peritoneal. Ayuda a llevar un control detallado de sesiones, balances hídricos y historial de tratamiento.
+          </Text>
+
+          <Text style={styles.aboutText}>
+            Recuerda: Esta app es una herramienta de apoyo y NO reemplaza el consejo médico profesional.
+          </Text>
+
+          <Text style={styles.aboutSubtext}>
+            Desarrollado con ❤️ para mejorar la calidad de vida de pacientes en diálisis.
+          </Text>
         </Card.Content>
       </Card>
 
@@ -298,10 +223,10 @@ export const SettingsScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: theme.colors.background,
   },
   header: {
     padding: 16,
@@ -309,51 +234,37 @@ const styles = StyleSheet.create({
   },
   title: {
     fontWeight: '700',
-    color: '#263238',
+    color: theme.colors.onBackground,
     marginBottom: 4,
   },
   subtitle: {
-    color: '#78909C',
+    color: theme.colors.outline,
   },
   card: {
     marginHorizontal: 16,
     marginBottom: 12,
     borderRadius: 12,
     elevation: 2,
+    backgroundColor: theme.colors.surface,
   },
   sectionTitle: {
     fontWeight: '600',
-    color: '#1976D2',
+    color: theme.colors.primary,
     marginBottom: 8,
   },
   divider: {
     marginBottom: 16,
+    backgroundColor: theme.colors.outline,
   },
-  fieldLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#546E7A',
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  input: {
-    backgroundColor: '#FFFFFF',
-    marginBottom: 8,
+  listItem: {
+    paddingHorizontal: 0,
   },
   helpText: {
     fontSize: 12,
-    color: '#78909C',
+    color: theme.colors.outline,
     fontStyle: 'italic',
-    marginTop: 4,
-  },
-  saveButton: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 10,
-    elevation: 3,
-  },
-  saveButtonContent: {
-    paddingVertical: 8,
+    marginTop: 12,
+    lineHeight: 16,
   },
   actionButton: {
     marginBottom: 12,
@@ -363,29 +274,66 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   dangerButton: {
-    borderColor: '#F44336',
+    borderColor: theme.colors.error,
+  },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.errorContainer,
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  warningIcon: {
+    fontSize: 20,
+    marginRight: 8,
   },
   warningText: {
+    flex: 1,
     fontSize: 12,
-    color: '#F57C00',
-    fontStyle: 'italic',
-    marginTop: 8,
-    textAlign: 'center',
+    color: theme.colors.onErrorContainer,
+    lineHeight: 16,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
     paddingVertical: 8,
   },
   infoLabel: {
     fontSize: 14,
-    color: '#546E7A',
+    color: theme.colors.outline,
     fontWeight: '500',
+    flex: 1,
   },
   infoValue: {
     fontSize: 14,
-    color: '#263238',
+    color: theme.colors.onSurface,
     fontWeight: '600',
+    textAlign: 'right',
+  },
+  infoValueContainer: {
+    alignItems: 'flex-end',
+  },
+  infoDivider: {
+    marginVertical: 8,
+    backgroundColor: theme.colors.surfaceVariant,
+  },
+  aboutCard: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: theme.colors.primaryContainer + '40',
+    borderColor: theme.colors.primary,
+  },
+  aboutText: {
+    color: theme.colors.onSurface,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  aboutSubtext: {
+    color: theme.colors.outline,
+    fontStyle: 'italic',
   },
   bottomSpacer: {
     height: 20,

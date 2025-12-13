@@ -3,20 +3,24 @@ import { View, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-nat
 import { Card, Searchbar, Text, Chip, Divider, IconButton, Portal, Dialog, Button, TextInput } from 'react-native-paper';
 import { DailyRecord, DialysisRecord, BagType } from '../types/index.js';
 import { getAllRecords, deleteRecord, updateRecord } from '../utils/storage';
+import { useAppTheme } from '../utils/ThemeContext';
 
 export const HistoryScreen = () => {
+  const { theme } = useAppTheme();
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredRecords, setFilteredRecords] = useState<DailyRecord[]>([]);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   
-  // Estados para edición
   const [editingRecord, setEditingRecord] = useState<DialysisRecord | null>(null);
   const [editDialogVisible, setEditDialogVisible] = useState(false);
   const [editFormData, setEditFormData] = useState({
     bagType: 1.5 as BagType,
+    infusion: '',
     drainage: '',
-    observations: ''
+    observations: '',
+    firstDrainage: '',
+    uf: '',
   });
 
   useEffect(() => {
@@ -83,8 +87,11 @@ export const HistoryScreen = () => {
     setEditingRecord(record);
     setEditFormData({
       bagType: record.bagType,
+      infusion: record.infusion.toString(),
       drainage: record.drainage.toString(),
-      observations: record.observations || ''
+      observations: record.observations || '',
+      firstDrainage: record.firstDrainage?.toString() || '',
+      uf: record.uf?.toString() || '',
     });
     setEditDialogVisible(true);
   };
@@ -92,25 +99,37 @@ export const HistoryScreen = () => {
   const handleSaveEdit = async () => {
     if (!editingRecord) return;
 
-    if (!editFormData.drainage) {
-      Alert.alert('Campo requerido', 'Por favor ingrese la cantidad de drenaje');
-      return;
+    if (editingRecord.type === 'manual') {
+      if (!editFormData.infusion || !editFormData.drainage) {
+        Alert.alert('Campos requeridos', 'Por favor ingrese infusión y drenaje');
+        return;
+      }
+    } else {
+      if (!editFormData.firstDrainage || !editFormData.infusion || !editFormData.drainage || !editFormData.uf) {
+        Alert.alert('Campos requeridos', 'Por favor complete todos los campos');
+        return;
+      }
     }
 
+    const infusion = parseFloat(editFormData.infusion);
     const drainage = parseFloat(editFormData.drainage);
-    if (isNaN(drainage)) {
-      Alert.alert('Error', 'La cantidad de drenaje debe ser un número válido');
+
+    if (isNaN(infusion) || isNaN(drainage)) {
+      Alert.alert('Error', 'Los valores deben ser números válidos');
       return;
     }
 
-    const balance = drainage - editingRecord.infusion;
+    const balance = drainage - infusion;
 
     const updatedRecord: DialysisRecord = {
       ...editingRecord,
       bagType: editFormData.bagType,
+      infusion: infusion,
       drainage: drainage,
       balance: balance,
-      observations: editFormData.observations
+      observations: editFormData.observations,
+      firstDrainage: editFormData.firstDrainage ? parseFloat(editFormData.firstDrainage) : undefined,
+      uf: editFormData.uf ? parseFloat(editFormData.uf) : undefined,
     };
 
     try {
@@ -125,9 +144,9 @@ export const HistoryScreen = () => {
   };
 
   const getBalanceColor = (balance: number): string => {
-    if (balance > 0) return '#4CAF50';
-    if (balance < 0) return '#F44336';
-    return '#757575';
+    if (balance > 0) return theme.colors.success;
+    if (balance < 0) return theme.colors.error;
+    return theme.colors.outline;
   };
 
   const formatDate = (dateString: string) => {
@@ -150,6 +169,8 @@ export const HistoryScreen = () => {
     });
   };
 
+  const styles = createStyles(theme);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -166,7 +187,7 @@ export const HistoryScreen = () => {
         onChangeText={onChangeSearch}
         value={searchQuery}
         style={styles.searchBar}
-        iconColor="#1976D2"
+        iconColor={theme.colors.primary}
         elevation={2}
       />
 
@@ -257,28 +278,37 @@ export const HistoryScreen = () => {
                                   >
                                     #{index + 1}
                                   </Chip>
+                                  <Chip 
+                                    style={record.type === 'manual' ? styles.manualChip : styles.automatedChip}
+                                    textStyle={styles.typeChipText}
+                                    icon={record.type === 'manual' ? 'hand-back-right' : 'robot'}
+                                  >
+                                    {record.type === 'manual' ? 'Manual' : 'APD'}
+                                  </Chip>
                                   <Text style={styles.sessionTime}>
                                     🕐 {formatTime(record.timestamp)}
                                   </Text>
                                 </View>
                                 <View style={styles.sessionActions}>
-                                  <Chip 
-                                    style={styles.concentrationChip}
-                                    textStyle={styles.concentrationText}
-                                  >
-                                    {record.bagType}%
-                                  </Chip>
+                                  {record.type === 'manual' && (
+                                    <Chip 
+                                      style={styles.concentrationChip}
+                                      textStyle={styles.concentrationText}
+                                    >
+                                      {record.bagType}%
+                                    </Chip>
+                                  )}
                                   <IconButton
                                     icon="pencil"
                                     size={20}
-                                    iconColor="#1976D2"
+                                    iconColor={theme.colors.primary}
                                     onPress={() => handleEditSession(record)}
                                     style={styles.actionButton}
                                   />
                                   <IconButton
                                     icon="delete"
                                     size={20}
-                                    iconColor="#F44336"
+                                    iconColor={theme.colors.error}
                                     onPress={() => handleDeleteSession(record)}
                                     style={styles.actionButton}
                                   />
@@ -286,6 +316,13 @@ export const HistoryScreen = () => {
                               </View>
 
                               <View style={styles.sessionData}>
+                                {record.type === 'automated' && record.firstDrainage && (
+                                  <View style={styles.dataItem}>
+                                    <Text style={styles.dataLabel}>P.D (Primer Drenaje)</Text>
+                                    <Text style={styles.dataValue}>{record.firstDrainage} ml</Text>
+                                  </View>
+                                )}
+
                                 <View style={styles.dataRow}>
                                   <View style={styles.dataItem}>
                                     <Text style={styles.dataLabel}>💉 Infusión</Text>
@@ -296,6 +333,13 @@ export const HistoryScreen = () => {
                                     <Text style={styles.dataValue}>{record.drainage} ml</Text>
                                   </View>
                                 </View>
+
+                                {record.type === 'automated' && record.uf && (
+                                  <View style={styles.ufContainer}>
+                                    <Text style={styles.ufLabel}>💧 UF (Ultrafiltrado)</Text>
+                                    <Text style={styles.ufValue}>{record.uf} ml</Text>
+                                  </View>
+                                )}
 
                                 <View style={styles.balanceRow}>
                                   <Text style={styles.balanceLabel}>⚖️ Balance</Text>
@@ -338,44 +382,81 @@ export const HistoryScreen = () => {
       <Portal>
         <Dialog visible={editDialogVisible} onDismiss={() => setEditDialogVisible(false)}>
           <Dialog.Title>Editar Sesión</Dialog.Title>
-          <Dialog.Content>
-            <Text style={styles.dialogLabel}>Concentración</Text>
-            <View style={styles.concentrationButtons}>
-              {[1.5, 2.5, 4.5].map((concentration) => (
-                <Chip
-                  key={concentration}
-                  selected={editFormData.bagType === concentration}
-                  onPress={() => setEditFormData({ ...editFormData, bagType: concentration as BagType })}
-                  style={[
-                    styles.concentrationOption,
-                    editFormData.bagType === concentration && styles.concentrationOptionSelected
-                  ]}
-                  textStyle={styles.concentrationOptionText}
-                >
-                  {concentration}%
-                </Chip>
-              ))}
-            </View>
+          <Dialog.ScrollArea>
+            <ScrollView>
+              {editingRecord?.type === 'manual' && (
+                <>
+                  <Text style={styles.dialogLabel}>Concentración</Text>
+                  <View style={styles.concentrationButtons}>
+                    {[1.5, 2.5, 4.5].map((concentration) => (
+                      <Chip
+                        key={concentration}
+                        selected={editFormData.bagType === concentration}
+                        onPress={() => setEditFormData({ ...editFormData, bagType: concentration as BagType })}
+                        style={[
+                          styles.concentrationOption,
+                          editFormData.bagType === concentration && styles.concentrationOptionSelected
+                        ]}
+                        textStyle={styles.concentrationOptionText}
+                      >
+                        {concentration}%
+                      </Chip>
+                    ))}
+                  </View>
+                </>
+              )}
 
-            <TextInput
-              label="Drenaje (ml)"
-              value={editFormData.drainage}
-              onChangeText={(value) => setEditFormData({ ...editFormData, drainage: value })}
-              keyboardType="numeric"
-              mode="outlined"
-              style={styles.dialogInput}
-            />
+              {editingRecord?.type === 'automated' && (
+                <TextInput
+                  label="P.D - Primer Drenaje (ml)"
+                  value={editFormData.firstDrainage}
+                  onChangeText={(value) => setEditFormData({ ...editFormData, firstDrainage: value })}
+                  keyboardType="numeric"
+                  mode="outlined"
+                  style={styles.dialogInput}
+                />
+              )}
 
-            <TextInput
-              label="Observaciones (opcional)"
-              value={editFormData.observations}
-              onChangeText={(value) => setEditFormData({ ...editFormData, observations: value })}
-              multiline
-              numberOfLines={3}
-              mode="outlined"
-              style={styles.dialogInput}
-            />
-          </Dialog.Content>
+              <TextInput
+                label="Infusión (ml)"
+                value={editFormData.infusion}
+                onChangeText={(value) => setEditFormData({ ...editFormData, infusion: value })}
+                keyboardType="numeric"
+                mode="outlined"
+                style={styles.dialogInput}
+              />
+
+              <TextInput
+                label="Drenaje (ml)"
+                value={editFormData.drainage}
+                onChangeText={(value) => setEditFormData({ ...editFormData, drainage: value })}
+                keyboardType="numeric"
+                mode="outlined"
+                style={styles.dialogInput}
+              />
+
+              {editingRecord?.type === 'automated' && (
+                <TextInput
+                  label="UF - Ultrafiltrado (ml)"
+                  value={editFormData.uf}
+                  onChangeText={(value) => setEditFormData({ ...editFormData, uf: value })}
+                  keyboardType="numeric"
+                  mode="outlined"
+                  style={styles.dialogInput}
+                />
+              )}
+
+              <TextInput
+                label="Observaciones (opcional)"
+                value={editFormData.observations}
+                onChangeText={(value) => setEditFormData({ ...editFormData, observations: value })}
+                multiline
+                numberOfLines={3}
+                mode="outlined"
+                style={styles.dialogInput}
+              />
+            </ScrollView>
+          </Dialog.ScrollArea>
           <Dialog.Actions>
             <Button onPress={() => setEditDialogVisible(false)}>Cancelar</Button>
             <Button onPress={handleSaveEdit}>Guardar</Button>
@@ -386,10 +467,10 @@ export const HistoryScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (theme: any) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: theme.colors.background,
   },
   header: {
     padding: 16,
@@ -397,17 +478,18 @@ const styles = StyleSheet.create({
   },
   title: {
     fontWeight: '700',
-    color: '#263238',
+    color: theme.colors.onBackground,
     marginBottom: 4,
   },
   subtitle: {
-    color: '#78909C',
+    color: theme.colors.outline,
   },
   searchBar: {
     marginHorizontal: 16,
     marginBottom: 16,
     borderRadius: 12,
     elevation: 2,
+    backgroundColor: theme.colors.surface,
   },
   scrollView: {
     flex: 1,
@@ -417,6 +499,7 @@ const styles = StyleSheet.create({
     marginTop: 40,
     borderRadius: 12,
     elevation: 2,
+    backgroundColor: theme.colors.surface,
   },
   emptyContent: {
     alignItems: 'center',
@@ -428,11 +511,11 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontWeight: '600',
-    color: '#263238',
+    color: theme.colors.onSurface,
     marginBottom: 8,
   },
   emptyText: {
-    color: '#78909C',
+    color: theme.colors.outline,
     textAlign: 'center',
     paddingHorizontal: 20,
   },
@@ -440,6 +523,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderRadius: 12,
     elevation: 3,
+    backgroundColor: theme.colors.surface,
   },
   collapsedView: {
     gap: 12,
@@ -455,7 +539,7 @@ const styles = StyleSheet.create({
   },
   dayTitle: {
     fontWeight: '700',
-    color: '#1976D2',
+    color: theme.colors.primary,
     textTransform: 'capitalize',
   },
   summaryRow: {
@@ -463,16 +547,16 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sessionsChip: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: theme.colors.primaryContainer,
   },
   chipText: {
     fontSize: 12,
-    color: '#1976D2',
+    color: theme.colors.primary,
     fontWeight: '600',
   },
   expandIcon: {
     fontSize: 20,
-    color: '#1976D2',
+    color: theme.colors.primary,
     fontWeight: '700',
     marginLeft: 12,
   },
@@ -480,14 +564,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#ECEFF1',
+    backgroundColor: theme.colors.surfaceVariant,
     padding: 16,
     borderRadius: 10,
   },
   balanceSummaryLabel: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#546E7A',
+    color: theme.colors.onSurfaceVariant,
   },
   balanceSummaryValue: {
     fontSize: 22,
@@ -495,18 +579,19 @@ const styles = StyleSheet.create({
   },
   expandDivider: {
     marginVertical: 16,
+    backgroundColor: theme.colors.outline,
   },
   sessionsTitle: {
     fontWeight: '600',
-    color: '#37474F',
+    color: theme.colors.onSurface,
     marginBottom: 12,
   },
   sessionCard: {
     marginBottom: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#CFD8DC',
-    backgroundColor: '#FFFFFF',
+    borderColor: theme.colors.outline,
+    backgroundColor: theme.colors.surface,
   },
   sessionHeader: {
     flexDirection: 'row',
@@ -521,19 +606,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     flex: 1,
+    flexWrap: 'wrap',
   },
   sessionBadge: {
-    backgroundColor: '#1976D2',
+    backgroundColor: theme.colors.primary,
     height: 28,
   },
   sessionBadgeText: {
     fontSize: 12,
-    color: '#FFFFFF',
+    color: theme.colors.onPrimary,
+    fontWeight: '700',
+  },
+  manualChip: {
+    backgroundColor: theme.colors.secondaryContainer,
+    height: 28,
+  },
+  automatedChip: {
+    backgroundColor: theme.colors.tertiaryContainer,
+    height: 28,
+  },
+  typeChipText: {
+    fontSize: 11,
     fontWeight: '700',
   },
   sessionTime: {
     fontSize: 14,
-    color: '#546E7A',
+    color: theme.colors.outline,
     fontWeight: '500',
   },
   sessionActions: {
@@ -542,12 +640,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   concentrationChip: {
-    backgroundColor: '#FFF3E0',
+    backgroundColor: theme.colors.warningContainer || '#FFF3E0',
     height: 28,
   },
   concentrationText: {
     fontSize: 12,
-    color: '#E65100',
+    color: theme.colors.warning,
     fontWeight: '700',
   },
   actionButton: {
@@ -562,33 +660,51 @@ const styles = StyleSheet.create({
   },
   dataItem: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: theme.colors.surfaceVariant,
     padding: 12,
     borderRadius: 8,
   },
   dataLabel: {
     fontSize: 12,
-    color: '#546E7A',
+    color: theme.colors.onSurfaceVariant,
     fontWeight: '500',
     marginBottom: 4,
   },
   dataValue: {
     fontSize: 16,
-    color: '#263238',
+    color: theme.colors.onSurface,
     fontWeight: '600',
+  },
+  ufContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primaryContainer,
+    padding: 12,
+    borderRadius: 8,
+  },
+  ufLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.colors.onPrimaryContainer,
+  },
+  ufValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.primary,
   },
   balanceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#ECEFF1',
+    backgroundColor: theme.colors.surfaceVariant,
     padding: 12,
     borderRadius: 8,
   },
   balanceLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#546E7A',
+    color: theme.colors.onSurfaceVariant,
   },
   balanceValue: {
     fontSize: 18,
@@ -597,20 +713,20 @@ const styles = StyleSheet.create({
   observationContainer: {
     marginTop: 12,
     padding: 12,
-    backgroundColor: '#FFF9C4',
+    backgroundColor: theme.colors.warningContainer || '#FFF9C4',
     borderRadius: 8,
     borderLeftWidth: 3,
-    borderLeftColor: '#FBC02D',
+    borderLeftColor: theme.colors.warning,
   },
   observationLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#F57F17',
+    color: theme.colors.warning,
     marginBottom: 4,
   },
   observationText: {
     fontSize: 14,
-    color: '#5D4037',
+    color: theme.colors.onSurface,
     lineHeight: 20,
   },
   bottomSpacer: {
@@ -619,7 +735,7 @@ const styles = StyleSheet.create({
   dialogLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#546E7A',
+    color: theme.colors.onSurface,
     marginBottom: 8,
     marginTop: 8,
   },
@@ -632,7 +748,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   concentrationOptionSelected: {
-    backgroundColor: '#1976D2',
+    backgroundColor: theme.colors.primary,
   },
   concentrationOptionText: {
     fontWeight: '600',
