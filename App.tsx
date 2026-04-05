@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet, StatusBar } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { PaperProvider } from 'react-native-paper';
@@ -28,7 +29,11 @@ function AppNavigator() {
   }, []);
 
   if (!initialRoute) {
-    return null;
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
   }
 
   return (
@@ -36,9 +41,12 @@ function AppNavigator() {
       <Stack.Navigator
         initialRouteName={initialRoute}
         screenOptions={{
-          headerStyle: { backgroundColor: theme.colors.primary },
-          headerTintColor: theme.colors.onPrimary,
-          headerTitleStyle: { fontWeight: 'bold' },
+          headerStyle: { backgroundColor: theme.colors.background },
+          headerTintColor: theme.colors.primary,
+          headerTitleStyle: { fontWeight: '700' },
+          headerShadowVisible: false,
+          headerTitleAlign: 'center',
+          contentStyle: { backgroundColor: theme.colors.background },
         }}
       >
         <Stack.Screen
@@ -85,11 +93,21 @@ export default function App() {
 }
 
 function AppContent() {
-  const { theme } = useAppTheme();
+  const { theme, isDarkMode } = useAppTheme();
 
   return (
-    <PaperProvider theme={theme}>
-      <AppNavigator />
-    </PaperProvider>
+    <>
+      <StatusBar
+        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+        backgroundColor={theme.colors.surface}
+      />
+      <PaperProvider theme={theme}>
+        <AppNavigator />
+      </PaperProvider>
+    </>
   );
 }
+
+const styles = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+});

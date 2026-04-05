@@ -1,52 +1,70 @@
 import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
+import { Platform } from 'react-native';
 import { MD3DarkTheme, MD3LightTheme } from 'react-native-paper';
 import { getSettings, saveSettings } from './settingsStorage';
 
-// Define colores personalizados para tema claro
+const appFontFamily = Platform.select({ ios: 'Avenir Next', default: 'sans-serif' }) || 'sans-serif';
+
+const withFontFamily = (fonts: typeof MD3LightTheme.fonts) =>
+  Object.fromEntries(
+    Object.entries(fonts).map(([key, fontDef]) => [key, { ...fontDef, fontFamily: appFontFamily }])
+  ) as typeof MD3LightTheme.fonts;
+
 const lightTheme = {
   ...MD3LightTheme,
+  roundness: 18,
+  fonts: withFontFamily(MD3LightTheme.fonts),
   colors: {
     ...MD3LightTheme.colors,
-    primary: '#1976D2',
-    primaryContainer: '#BBDEFB',
-    secondary: '#0288D1',
-    secondaryContainer: '#B3E5FC',
-    background: '#F5F7FA',
+    primary: '#0A6CFF',
+    primaryContainer: '#E5F0FF',
+    secondary: '#2B8D86',
+    secondaryContainer: '#E2F4F1',
+    tertiary: '#4F6B9B',
+    tertiaryContainer: '#E6ECF9',
+    background: '#F4F7FB',
     surface: '#FFFFFF',
-    surfaceVariant: '#ECEFF1',
-    error: '#F44336',
-    errorContainer: '#FFCDD2',
+    surfaceVariant: '#EEF3FA',
+    outlineVariant: '#DCE4EF',
+    error: '#D64A4A',
+    errorContainer: '#FCE8E8',
     onPrimary: '#FFFFFF',
     onSecondary: '#FFFFFF',
-    onBackground: '#263238',
-    onSurface: '#263238',
-    outline: '#78909C',
-    success: '#4CAF50',
-    warning: '#FBC02D',
+    onBackground: '#111A2D',
+    onSurface: '#111A2D',
+    onSurfaceVariant: '#66758D',
+    outline: '#C8D0DC',
+    success: '#059669',
+    warning: '#B45309',
   },
 };
 
-// Define colores personalizados para tema oscuro
 const darkTheme = {
   ...MD3DarkTheme,
+  roundness: 18,
+  fonts: withFontFamily(MD3DarkTheme.fonts),
   colors: {
     ...MD3DarkTheme.colors,
-    primary: '#64B5F6',
-    primaryContainer: '#1565C0',
-    secondary: '#4FC3F7',
-    secondaryContainer: '#0277BD',
-    background: '#121212',
-    surface: '#1E1E1E',
-    surfaceVariant: '#2C2C2C',
-    error: '#EF5350',
-    errorContainer: '#C62828',
-    onPrimary: '#000000',
-    onSecondary: '#000000',
-    onBackground: '#FFFFFF',
-    onSurface: '#FFFFFF',
-    outline: '#90A4AE',
-    success: '#66BB6A',
-    warning: '#FFB300',
+    primary: '#6CB2FF',
+    primaryContainer: '#0A3F78',
+    secondary: '#6FD1C8',
+    secondaryContainer: '#184A47',
+    tertiary: '#B8CAEB',
+    tertiaryContainer: '#334968',
+    background: '#0B1628',
+    surface: '#142237',
+    surfaceVariant: '#1C2D46',
+    outlineVariant: '#324A68',
+    error: '#FF8F87',
+    errorContainer: '#7E2D2B',
+    onPrimary: '#012542',
+    onSecondary: '#10263E',
+    onBackground: '#E8EEF8',
+    onSurface: '#E8EEF8',
+    onSurfaceVariant: '#B2C0D3',
+    outline: '#8DA0B8',
+    success: '#4FD19A',
+    warning: '#F5B45A',
   },
 };
 

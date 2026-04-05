@@ -1,460 +1,436 @@
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
-import { Card, Searchbar, Text, Chip, Divider, IconButton, Portal, Dialog, Button, TextInput } from 'react-native-paper';
-import { DailyRecord, DialysisRecord, BagType } from '../types/index.js';
-import { getAllRecords, deleteRecord, updateRecord } from '../utils/storage';
+import React, { useState, useMemo, useCallback } from 'react';
+import { View, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { Button, Text, Card, Divider, TextInput, IconButton, Portal, Dialog, Chip } from 'react-native-paper';
+import { useFocusEffect } from '@react-navigation/native';
+import { DialysisRecord } from '../types/index';
+import { getAllRecords, updateRecord, deleteRecord } from '../utils/storage';
 import { useAppTheme } from '../utils/ThemeContext';
+import { FadeInView } from '../components/FadeInView';
+import { useToast, Toast } from '../components/Toast';
+import { ScreenScaffold } from '../components/ScreenScaffold';
+import { validators } from '../utils/validators';
+import { commonSpacing, commonRadius } from '../utils/themeStyles';
 
-export const HistoryScreen = () => {
+const PD_REFERENCE_INFUSION = 2000;
+
+export const HistoryScreen = ({ navigation }: { navigation: any }) => {
   const { theme } = useAppTheme();
-  const [records, setRecords] = useState<DailyRecord[]>([]);
+  const toast = useToast();
+  const [records, setRecords] = useState<DialysisRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredRecords, setFilteredRecords] = useState<DailyRecord[]>([]);
-  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
-  
-  const [editingRecord, setEditingRecord] = useState<DialysisRecord | null>(null);
-  const [editDialogVisible, setEditDialogVisible] = useState(false);
-  const [editFormData, setEditFormData] = useState({
-    bagType: 1.5 as BagType,
-    infusion: '',
-    drainage: '',
-    observations: '',
-    firstDrainage: '',
-    uf: '',
-  });
+  const [loading, setLoading] = useState(true);
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    loadRecords();
-  }, []);
+  // Editing dialog
+  const [editingRecord, setEditingRecord] = useState<DialysisRecord | null>(null);
+  const [editForm, setEditForm] = useState<any>({});
+  const [editDialogVisible, setEditDialogVisible] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadRecords();
+    }, [])
+  );
 
   const loadRecords = async () => {
-    const allRecords = await getAllRecords();
-    const recordsArray = Object.values(allRecords);
-    recordsArray.sort((a: DailyRecord, b: DailyRecord) => 
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-    setRecords(recordsArray);
-    setFilteredRecords(recordsArray);
-  };
-
-  const onChangeSearch = (query: string) => {
-    setSearchQuery(query);
-    if (query) {
-      const filtered = records.filter((record: DailyRecord) =>
-        record.date.includes(query) ||
-        new Date(record.date).toLocaleDateString('es-ES').includes(query)
-      );
-      setFilteredRecords(filtered);
-    } else {
-      setFilteredRecords(records);
+    try {
+      setLoading(true);
+      const allRecordsMap = await getAllRecords();
+      const allRecords: DialysisRecord[] = [];
+      for (const dateKey in allRecordsMap) {
+        allRecords.push(...allRecordsMap[dateKey].records);
+      }
+      allRecords.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setRecords(allRecords);
+    } catch (error) {
+      toast.showToast('Error al cargar historial', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const toggleDay = (date: string) => {
-    const newExpanded = new Set(expandedDays);
-    if (newExpanded.has(date)) {
-      newExpanded.delete(date);
-    } else {
-      newExpanded.add(date);
-    }
-    setExpandedDays(newExpanded);
+  const groupedByDate = useMemo(() => {
+    const map: Record<string, DialysisRecord[]> = {};
+    records.forEach((r) => {
+      const key = r.timestamp.split('T')[0];
+      if (!map[key]) map[key] = [];
+      map[key].push(r);
+    });
+    return map;
+  }, [records]);
+
+  const dateKeys = useMemo(() => Object.keys(groupedByDate).sort((a, b) => (a > b ? -1 : 1)), [groupedByDate]);
+  const dayTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    Object.entries(groupedByDate).forEach(([dateKey, dayRecords]) => {
+      totals[dateKey] = dayRecords.reduce((sum, record) => sum + (record.balance || 0), 0);
+    });
+    return totals;
+  }, [groupedByDate]);
+
+  const filteredDateKeys = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return dateKeys;
+
+    return dateKeys.filter((dateKey) => {
+      const dateLabel = new Date(`${dateKey}T00:00:00`).toLocaleDateString('es-ES', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }).toLowerCase();
+
+      const recordsForDate = groupedByDate[dateKey] || [];
+      const hasMatchInRecords = recordsForDate.some((record) => {
+        const typeLabel = record.type === 'automated' ? 'automatizada apd' : 'manual capd';
+        const observations = (record.observations || '').toLowerCase();
+        return typeLabel.includes(query) || observations.includes(query);
+      });
+
+      return dateKey.includes(query) || dateLabel.includes(query) || hasMatchInRecords;
+    });
+  }, [dateKeys, groupedByDate, searchQuery]);
+
+  const toggleDate = (dateKey: string) => {
+    setExpandedDates((prev) => ({ ...prev, [dateKey]: !prev[dateKey] }));
   };
 
-  const handleDeleteSession = (record: DialysisRecord) => {
-    Alert.alert(
-      'Eliminar Sesión',
-      '¿Estás seguro de que deseas eliminar esta sesión de diálisis?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteRecord(record.id);
-              await loadRecords();
-              Alert.alert('Éxito', 'Sesión eliminada correctamente');
-            } catch (error) {
-              Alert.alert('Error', 'No se pudo eliminar la sesión');
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleEditSession = (record: DialysisRecord) => {
+  const openEdit = (record: DialysisRecord) => {
     setEditingRecord(record);
-    setEditFormData({
-      bagType: record.bagType,
-      infusion: record.infusion.toString(),
-      drainage: record.drainage.toString(),
-      observations: record.observations || '',
-      firstDrainage: record.firstDrainage?.toString() || '',
-      uf: record.uf?.toString() || '',
+    setEditForm({ ...record, // clone
+      infusion: record.infusion?.toString?.() || '',
+      drainage: record.drainage?.toString?.() || '',
+      uf: (record as any).uf?.toString?.() || '',
+      firstDrainage: (record as any).firstDrainage?.toString?.() || '',
+      observations: record.observations || ''
     });
     setEditDialogVisible(true);
   };
 
+  const handleDelete = async (id?: string) => {
+    if (!id) return;
+    try {
+      await deleteRecord(id);
+      await loadRecords();
+      toast.showToast('Registro eliminado', 'success');
+    } catch (err) {
+      toast.showToast('Error al eliminar registro', 'error');
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!editingRecord) return;
-
-    if (editingRecord.type === 'manual') {
-      if (!editFormData.infusion || !editFormData.drainage) {
-        Alert.alert('Campos requeridos', 'Por favor ingrese infusión y drenaje');
-        return;
-      }
-    } else {
-      if (!editFormData.firstDrainage || !editFormData.infusion || !editFormData.drainage || !editFormData.uf) {
-        Alert.alert('Campos requeridos', 'Por favor complete todos los campos');
-        return;
-      }
-    }
-
-    const infusion = parseFloat(editFormData.infusion);
-    const drainage = parseFloat(editFormData.drainage);
-
-    if (isNaN(infusion) || isNaN(drainage)) {
-      Alert.alert('Error', 'Los valores deben ser números válidos');
-      return;
-    }
-
-    const balance = drainage - infusion;
-
-    const updatedRecord: DialysisRecord = {
-      ...editingRecord,
-      bagType: editFormData.bagType,
-      infusion: infusion,
-      drainage: drainage,
-      balance: balance,
-      observations: editFormData.observations,
-      firstDrainage: editFormData.firstDrainage ? parseFloat(editFormData.firstDrainage) : undefined,
-      uf: editFormData.uf ? parseFloat(editFormData.uf) : undefined,
-    };
-
     try {
-      await updateRecord(updatedRecord);
-      await loadRecords();
-      setEditDialogVisible(false);
-      setEditingRecord(null);
-      Alert.alert('Éxito', 'Sesión actualizada correctamente');
-    } catch (error) {
-      Alert.alert('Error', 'No se pudo actualizar la sesión');
+      const infusionValidation = validators.positiveNumber(editForm.infusion || '', 'Infusión');
+      const drainageValidation = validators.positiveNumber(editForm.drainage || '', 'Drenaje');
+      const observationsValidation = validators.observations(editForm.observations || '');
+      const manualCoherenceValidation = validators.coherenceDrainageInfusion(
+        editForm.drainage || '',
+        editForm.infusion || ''
+      );
+
+      let firstError =
+        infusionValidation.error ||
+        drainageValidation.error ||
+        observationsValidation.error;
+
+      if (editingRecord.type === 'manual') {
+        firstError = firstError || manualCoherenceValidation.error;
+      }
+
+      if (editingRecord.type === 'automated') {
+        const pdValidation = validators.nonNegativeNumber(editForm.firstDrainage || '', 'P.D');
+        const ufValidation = validators.signedNumber(editForm.uf || '', 'UF');
+        const automatedCoherenceValidation = validators.coherenceAutomated(
+          editForm.firstDrainage || '',
+          editForm.infusion || '',
+          editForm.drainage || ''
+        );
+
+        firstError =
+          firstError ||
+          pdValidation.error ||
+          ufValidation.error ||
+          automatedCoherenceValidation.error;
+      }
+
+      if (firstError) {
+        toast.showToast(firstError, 'error');
+        return;
+      }
+
+      const updated: DialysisRecord = { ...editingRecord } as any;
+      updated.infusion = Number(validators.normalizeNumericInput(editForm.infusion || '0'));
+      updated.drainage = Number(validators.normalizeNumericInput(editForm.drainage || '0'));
+      updated.observations = (editForm.observations || '').trim();
+      if (editingRecord.type === 'automated') {
+        const ufValue = Number(validators.normalizeNumericInput(editForm.uf || '0'));
+        const firstDrainageValue = Number(validators.normalizeNumericInput(editForm.firstDrainage || '0'));
+        const pdBalanceValue = PD_REFERENCE_INFUSION - firstDrainageValue;
+
+        (updated as any).uf = ufValue;
+        (updated as any).firstDrainage = firstDrainageValue;
+        (updated as any).pdBalance = pdBalanceValue;
+        updated.balance = pdBalanceValue + ufValue;
+      } else if (editingRecord.type === 'manual') {
+        // For manual, keep simple per-session balance
+        updated.balance = updated.drainage - updated.infusion;
+      }
+
+      const ok = await updateRecord(updated);
+      if (ok) {
+        toast.showToast('Registro actualizado', 'success');
+        setEditDialogVisible(false);
+        setEditingRecord(null);
+        await loadRecords();
+      } else {
+        toast.showToast('No se pudo actualizar', 'error');
+      }
+    } catch (err) {
+      toast.showToast('Error al guardar cambios', 'error');
     }
-  };
-
-  const getBalanceColor = (balance: number): string => {
-    if (balance > 0) return theme.colors.success;
-    if (balance < 0) return theme.colors.error;
-    return theme.colors.outline;
-  };
-
-  const formatDate = (dateString: string) => {
-    const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day));
-    return date.toLocaleDateString('es-ES', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric',
-      timeZone: 'UTC'
-    });
-  };
-
-  const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('es-ES', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
   };
 
   const styles = createStyles(theme);
+  const formatSignedBalance = (value: number) => `${value > 0 ? '+' : ''}${value.toLocaleString('es-ES')} ml`;
+
+  if (loading) return (
+    <View style={styles.loadingContainer}><Text>Cargando historial...</Text></View>
+  );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text variant="headlineSmall" style={styles.title}>
-          📊 Historial de Diálisis
-        </Text>
-        <Text variant="bodyMedium" style={styles.subtitle}>
-          {filteredRecords.length} {filteredRecords.length === 1 ? 'día' : 'días'} registrados
-        </Text>
-      </View>
+    <ScreenScaffold contentContainerStyle={styles.contentContainer}>
+      <Toast visible={toast.visible} message={toast.message} type={toast.type} onDismiss={toast.hideToast} theme={theme} />
 
-      <Searchbar
-        placeholder="Buscar por fecha..."
-        onChangeText={onChangeSearch}
-        value={searchQuery}
-        style={styles.searchBar}
-        iconColor={theme.colors.primary}
-        elevation={2}
-      />
+      <FadeInView delay={10} offsetY={6}>
+        <View style={styles.headerBlock}>
+          <Text style={styles.headerTitle}>Historial</Text>
+          <Text style={styles.headerSubtitle}>Revisa y edita tus sesiones registradas</Text>
+        </View>
+      </FadeInView>
 
-      <ScrollView 
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-      >
-        {filteredRecords.length === 0 ? (
-          <Card style={styles.emptyCard}>
-            <Card.Content style={styles.emptyContent}>
-              <Text variant="displaySmall" style={styles.emptyIcon}>📋</Text>
-              <Text variant="titleLarge" style={styles.emptyTitle}>
-                No hay registros
-              </Text>
-              <Text variant="bodyMedium" style={styles.emptyText}>
-                {searchQuery 
-                  ? 'No se encontraron resultados para tu búsqueda'
-                  : 'Aún no has registrado ninguna sesión de diálisis'}
-              </Text>
-            </Card.Content>
-          </Card>
-        ) : (
-          filteredRecords.map((dailyRecord: DailyRecord) => {
-            const isExpanded = expandedDays.has(dailyRecord.date);
-            
-            return (
-              <Card key={dailyRecord.date} style={styles.dayCard} mode="elevated">
-                <TouchableOpacity 
-                  onPress={() => toggleDay(dailyRecord.date)}
-                  activeOpacity={0.7}
-                >
-                  <Card.Content>
-                    <View style={styles.collapsedView}>
-                      <View style={styles.dayHeaderRow}>
-                        <View style={styles.dayInfo}>
-                          <Text variant="titleMedium" style={styles.dayTitle}>
-                            📅 {formatDate(dailyRecord.date)}
-                          </Text>
-                          <View style={styles.summaryRow}>
-                            <Chip 
-                              icon="water" 
-                              style={styles.sessionsChip}
-                              textStyle={styles.chipText}
-                            >
-                              {dailyRecord.records.length} {dailyRecord.records.length === 1 ? 'sesión' : 'sesiones'}
-                            </Chip>
-                          </View>
-                        </View>
-                        <Text style={styles.expandIcon}>
-                          {isExpanded ? '▲' : '▼'}
-                        </Text>
-                      </View>
+      <FadeInView delay={20} offsetY={8}>
+        <Card style={styles.searchCard} mode="elevated">
+          <Card.Content style={styles.searchContent}>
+            <TextInput
+              mode="outlined"
+              placeholder="Buscar por fecha, tipo u observaciones..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              left={<TextInput.Icon icon="magnify" />}
+              style={styles.searchBar}
+              outlineStyle={styles.searchOutline}
+            />
+            <Text style={styles.resultsMeta}>
+              {filteredDateKeys.length} {filteredDateKeys.length === 1 ? 'día encontrado' : 'días encontrados'}
+            </Text>
+          </Card.Content>
+        </Card>
+      </FadeInView>
 
-                      <View style={styles.balanceSummary}>
-                        <Text style={styles.balanceSummaryLabel}>Balance Total</Text>
-                        <Text 
-                          style={[
-                            styles.balanceSummaryValue,
-                            { color: getBalanceColor(dailyRecord.totalBalance) }
-                          ]}
-                        >
-                          {dailyRecord.totalBalance > 0 ? '+' : ''}
-                          {dailyRecord.totalBalance} ml
-                        </Text>
+      {filteredDateKeys.length === 0 && (
+        <View style={styles.emptyState}>
+          <Text variant="bodyLarge" style={styles.emptyText}>Sin registros para mostrar</Text>
+          <Button mode="contained" onPress={() => navigation.navigate('Welcome')} style={styles.navigateButton}>Crear nuevo registro</Button>
+        </View>
+      )}
+
+      {filteredDateKeys.map((dateKey, index) => (
+        <FadeInView
+          key={`date-${dateKey}`}
+          delay={70 + index * 35}
+          offsetY={10}
+        >
+          <Card style={styles.dayCard} mode="elevated">
+            <TouchableOpacity onPress={() => toggleDate(dateKey)} activeOpacity={0.8}>
+              <Card.Content>
+                <View style={styles.dayHeaderRow}>
+                  <View style={styles.dayInfo}>
+                    <Text style={styles.dayTitle}>{new Date(`${dateKey}T00:00:00`).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</Text>
+                    <View style={styles.dayMetaRow}>
+                      <Chip compact style={styles.metaChip} textStyle={styles.metaChipText}>
+                        {groupedByDate[dateKey].length} {groupedByDate[dateKey].length === 1 ? 'sesión' : 'sesiones'}
+                      </Chip>
+                      <View style={styles.dayBalanceChip}>
+                        <Text style={styles.dayBalanceLabel}>Balance total</Text>
+                        <Text style={styles.dayBalanceValue}>{formatSignedBalance(dayTotals[dateKey] || 0)}</Text>
                       </View>
                     </View>
+                  </View>
+                  <IconButton
+                    icon={expandedDates[dateKey] ? 'chevron-up' : 'chevron-down'}
+                    size={20}
+                    iconColor={theme.colors.primary}
+                    style={styles.expandIconButton}
+                  />
+                </View>
+              </Card.Content>
+            </TouchableOpacity>
 
-                    {isExpanded && (
-                      <>
-                        <Divider style={styles.expandDivider} />
-                        
-                        <Text variant="titleSmall" style={styles.sessionsTitle}>
-                          💧 Sesiones del Día
-                        </Text>
+            {expandedDates[dateKey] && (
+              <Card.Content>
+                {groupedByDate[dateKey].map((record) => (
+                  <Card key={record.id} style={styles.recordCardInner} mode="outlined">
+                    <Card.Content>
+                      {(() => {
+                        const pdBalance =
+                          (record as any).pdBalance !== undefined
+                            ? (record as any).pdBalance
+                            : typeof (record as any).firstDrainage === 'number'
+                              ? PD_REFERENCE_INFUSION - (record as any).firstDrainage
+                              : 0;
+                        const uf = (record as any).uf || 0;
 
-                        {dailyRecord.records.map((record: any, index: number) => (
-                          <Card 
-                            key={record.id} 
-                            style={styles.sessionCard}
-                            mode="outlined"
-                          >
-                            <Card.Content>
-                              <View style={styles.sessionHeader}>
-                                <View style={styles.sessionTitleRow}>
-                                  <Chip 
-                                    style={styles.sessionBadge}
-                                    textStyle={styles.sessionBadgeText}
-                                  >
-                                    #{index + 1}
-                                  </Chip>
-                                  <Chip 
-                                    style={record.type === 'manual' ? styles.manualChip : styles.automatedChip}
-                                    textStyle={styles.typeChipText}
-                                    icon={record.type === 'manual' ? 'hand-back-right' : 'robot'}
-                                  >
-                                    {record.type === 'manual' ? 'Manual' : 'APD'}
-                                  </Chip>
-                                  <Text style={styles.sessionTime}>
-                                    🕐 {formatTime(record.timestamp)}
-                                  </Text>
-                                </View>
-                                <View style={styles.sessionActions}>
-                                  {record.type === 'manual' && (
-                                    <Chip 
-                                      style={styles.concentrationChip}
-                                      textStyle={styles.concentrationText}
-                                    >
-                                      {record.bagType}%
-                                    </Chip>
-                                  )}
-                                  <IconButton
-                                    icon="pencil"
-                                    size={20}
-                                    iconColor={theme.colors.primary}
-                                    onPress={() => handleEditSession(record)}
-                                    style={styles.actionButton}
-                                  />
-                                  <IconButton
-                                    icon="delete"
-                                    size={20}
-                                    iconColor={theme.colors.error}
-                                    onPress={() => handleDeleteSession(record)}
-                                    style={styles.actionButton}
-                                  />
-                                </View>
-                              </View>
+                        return (
+                          <>
+                      <View style={styles.recordHeader}>
+                        <View style={styles.recordInfo}>
+                          <Text style={styles.recordType}>{record.type === 'automated' ? 'APD' : 'CAPD'}</Text>
+                          <Text style={styles.recordDate}>{new Date(record.timestamp).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</Text>
+                        </View>
+                        <View style={styles.recordActions}>
+                          <IconButton icon="pencil-outline" size={20} onPress={() => openEdit(record)} />
+                          <IconButton icon="delete-outline" size={20} onPress={() => handleDelete(record.id)} />
+                        </View>
+                      </View>
 
-                              <View style={styles.sessionData}>
-                                {record.type === 'automated' && record.firstDrainage && (
-                                  <View style={styles.dataItem}>
-                                    <Text style={styles.dataLabel}>P.D (Primer Drenaje)</Text>
-                                    <Text style={styles.dataValue}>{record.firstDrainage} ml</Text>
-                                  </View>
-                                )}
+                      <Divider style={styles.divider} />
 
-                                <View style={styles.dataRow}>
-                                  <View style={styles.dataItem}>
-                                    <Text style={styles.dataLabel}>💉 Infusión</Text>
-                                    <Text style={styles.dataValue}>{record.infusion} ml</Text>
-                                  </View>
-                                  <View style={styles.dataItem}>
-                                    <Text style={styles.dataLabel}>🧪 Drenaje</Text>
-                                    <Text style={styles.dataValue}>{record.drainage} ml</Text>
-                                  </View>
-                                </View>
+                      {record.type === 'automated' && (
+                        <View style={styles.detailsSection}>
+                          <Text style={styles.detailLabel}>P.D: <Text style={styles.detailValue}>{(record as any).firstDrainage || 0} ml</Text></Text>
+                          <Text style={styles.detailLabel}>Balance P.D.: <Text style={styles.detailValue}>{pdBalance} ml</Text></Text>
+                          <Text style={styles.detailLabel}>Infusión: <Text style={styles.detailValue}>{record.infusion || 0} ml</Text></Text>
+                          <Text style={styles.detailLabel}>Drenaje: <Text style={styles.detailValue}>{record.drainage || 0} ml</Text></Text>
+                          <Text style={styles.detailLabel}>UF: <Text style={styles.detailValue}>{uf} ml</Text></Text>
+                        </View>
+                      )}
 
-                                {record.type === 'automated' && record.uf && (
-                                  <View style={styles.ufContainer}>
-                                    <Text style={styles.ufLabel}>💧 UF (Ultrafiltrado)</Text>
-                                    <Text style={styles.ufValue}>{record.uf} ml</Text>
-                                  </View>
-                                )}
+                      {record.type === 'manual' && (
+                        <View style={styles.entriesContainer}>
+                          <Text style={styles.detailLabel}>Sesión: <Text style={styles.detailValue}>Inf: {record.infusion} ml | Dren: {record.drainage} ml</Text></Text>
+                        </View>
+                      )}
 
-                                <View style={styles.balanceRow}>
-                                  <Text style={styles.balanceLabel}>⚖️ Balance</Text>
-                                  <Text 
-                                    style={[
-                                      styles.balanceValue,
-                                      { color: getBalanceColor(record.balance) }
-                                    ]}
-                                  >
-                                    {record.balance > 0 ? '+' : ''}
-                                    {record.balance} ml
-                                  </Text>
-                                </View>
-                              </View>
+                      {record.observations ? (
+                        <View style={styles.observationsSection}><Text style={styles.observationText}>{record.observations}</Text></View>
+                      ) : null}
+                          </>
+                        );
+                      })()}
+                    </Card.Content>
+                  </Card>
+                ))}
+              </Card.Content>
+            )}
+          </Card>
+        </FadeInView>
+      ))}
 
-                              {record.observations && (
-                                <View style={styles.observationContainer}>
-                                  <Text style={styles.observationLabel}>📝 Observaciones</Text>
-                                  <Text style={styles.observationText}>
-                                    {record.observations}
-                                  </Text>
-                                </View>
-                              )}
-                            </Card.Content>
-                          </Card>
-                        ))}
-                      </>
-                    )}
-                  </Card.Content>
-                </TouchableOpacity>
-              </Card>
-            );
-          })
-        )}
-
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
-
-      {/* Dialog de Edición */}
       <Portal>
         <Dialog visible={editDialogVisible} onDismiss={() => setEditDialogVisible(false)}>
-          <Dialog.Title>Editar Sesión</Dialog.Title>
+          <Dialog.Title>Editar sesión</Dialog.Title>
           <Dialog.ScrollArea>
-            <ScrollView>
-              {editingRecord?.type === 'manual' && (
+            <ScrollView contentContainerStyle={{ padding: 16 }}>
+              {editingRecord?.type === 'automated' ? (
                 <>
-                  <Text style={styles.dialogLabel}>Concentración</Text>
-                  <View style={styles.concentrationButtons}>
-                    {[1.5, 2.5, 4.5].map((concentration) => (
-                      <Chip
-                        key={concentration}
-                        selected={editFormData.bagType === concentration}
-                        onPress={() => setEditFormData({ ...editFormData, bagType: concentration as BagType })}
-                        style={[
-                          styles.concentrationOption,
-                          editFormData.bagType === concentration && styles.concentrationOptionSelected
-                        ]}
-                        textStyle={styles.concentrationOptionText}
-                      >
-                        {concentration}%
-                      </Chip>
-                    ))}
+                  <View style={styles.dialogField}>
+                    <Text style={styles.dialogFieldLabel}>P.D - Primer drenaje (ml)</Text>
+                    <TextInput
+                      value={editForm.firstDrainage}
+                      onChangeText={(t) => setEditForm((s:any)=>({ ...s, firstDrainage: t }))}
+                      keyboardType="numeric"
+                      mode="flat"
+                      placeholder="Ej: 2200"
+                      style={styles.dialogInput}
+                      underlineColor="transparent"
+                      activeUnderlineColor="transparent"
+                    />
+                  </View>
+                  <View style={styles.dialogField}>
+                    <Text style={styles.dialogFieldLabel}>Infusión (ml)</Text>
+                    <TextInput
+                      value={editForm.infusion}
+                      onChangeText={(t) => setEditForm((s:any)=>({ ...s, infusion: t }))}
+                      keyboardType="numeric"
+                      mode="flat"
+                      placeholder="Ej: 8000"
+                      style={styles.dialogInput}
+                      underlineColor="transparent"
+                      activeUnderlineColor="transparent"
+                    />
+                  </View>
+                  <View style={styles.dialogField}>
+                    <Text style={styles.dialogFieldLabel}>Drenaje (ml)</Text>
+                    <TextInput
+                      value={editForm.drainage}
+                      onChangeText={(t) => setEditForm((s:any)=>({ ...s, drainage: t }))}
+                      keyboardType="numeric"
+                      mode="flat"
+                      placeholder="Ej: 8800"
+                      style={styles.dialogInput}
+                      underlineColor="transparent"
+                      activeUnderlineColor="transparent"
+                    />
+                  </View>
+                  <View style={styles.dialogField}>
+                    <Text style={styles.dialogFieldLabel}>UF (ml)</Text>
+                    <TextInput
+                      value={editForm.uf}
+                      onChangeText={(t) => setEditForm((s:any)=>({ ...s, uf: t }))}
+                      keyboardType="numeric"
+                      mode="flat"
+                      placeholder="Ej: -800"
+                      style={styles.dialogInput}
+                      underlineColor="transparent"
+                      activeUnderlineColor="transparent"
+                    />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.dialogField}>
+                    <Text style={styles.dialogFieldLabel}>Infusión (ml)</Text>
+                    <TextInput
+                      value={editForm.infusion}
+                      onChangeText={(t) => setEditForm((s:any)=>({ ...s, infusion: t }))}
+                      keyboardType="numeric"
+                      mode="flat"
+                      placeholder="Ej: 2000"
+                      style={styles.dialogInput}
+                      underlineColor="transparent"
+                      activeUnderlineColor="transparent"
+                    />
+                  </View>
+                  <View style={styles.dialogField}>
+                    <Text style={styles.dialogFieldLabel}>Drenaje (ml)</Text>
+                    <TextInput
+                      value={editForm.drainage}
+                      onChangeText={(t) => setEditForm((s:any)=>({ ...s, drainage: t }))}
+                      keyboardType="numeric"
+                      mode="flat"
+                      placeholder="Ej: 2200"
+                      style={styles.dialogInput}
+                      underlineColor="transparent"
+                      activeUnderlineColor="transparent"
+                    />
                   </View>
                 </>
               )}
-
-              {editingRecord?.type === 'automated' && (
+              <View style={styles.dialogField}>
+                <Text style={styles.dialogFieldLabel}>Observaciones</Text>
                 <TextInput
-                  label="P.D - Primer Drenaje (ml)"
-                  value={editFormData.firstDrainage}
-                  onChangeText={(value) => setEditFormData({ ...editFormData, firstDrainage: value })}
-                  keyboardType="numeric"
-                  mode="outlined"
+                  value={editForm.observations}
+                  onChangeText={(t) => setEditForm((s:any)=>({ ...s, observations: t }))}
+                  multiline
+                  numberOfLines={3}
+                  mode="flat"
+                  placeholder="Escribe una nota opcional"
                   style={styles.dialogInput}
+                  underlineColor="transparent"
+                  activeUnderlineColor="transparent"
                 />
-              )}
-
-              <TextInput
-                label="Infusión (ml)"
-                value={editFormData.infusion}
-                onChangeText={(value) => setEditFormData({ ...editFormData, infusion: value })}
-                keyboardType="numeric"
-                mode="outlined"
-                style={styles.dialogInput}
-              />
-
-              <TextInput
-                label="Drenaje (ml)"
-                value={editFormData.drainage}
-                onChangeText={(value) => setEditFormData({ ...editFormData, drainage: value })}
-                keyboardType="numeric"
-                mode="outlined"
-                style={styles.dialogInput}
-              />
-
-              {editingRecord?.type === 'automated' && (
-                <TextInput
-                  label="UF - Ultrafiltrado (ml)"
-                  value={editFormData.uf}
-                  onChangeText={(value) => setEditFormData({ ...editFormData, uf: value })}
-                  keyboardType="numeric"
-                  mode="outlined"
-                  style={styles.dialogInput}
-                />
-              )}
-
-              <TextInput
-                label="Observaciones (opcional)"
-                value={editFormData.observations}
-                onChangeText={(value) => setEditFormData({ ...editFormData, observations: value })}
-                multiline
-                numberOfLines={3}
-                mode="outlined"
-                style={styles.dialogInput}
-              />
+              </View>
             </ScrollView>
           </Dialog.ScrollArea>
           <Dialog.Actions>
@@ -463,70 +439,64 @@ export const HistoryScreen = () => {
           </Dialog.Actions>
         </Dialog>
       </Portal>
-    </View>
+
+      <View style={styles.bottomSpacer} />
+    </ScreenScaffold>
   );
 };
 
 const createStyles = (theme: any) => StyleSheet.create({
-  container: {
+  loadingContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: theme.colors.background,
   },
-  header: {
-    padding: 16,
-    paddingBottom: 8,
+  contentContainer: {
+    paddingBottom: commonSpacing.xxxl,
   },
-  title: {
+  headerBlock: {
+    marginBottom: commonSpacing.md,
+    paddingHorizontal: 2,
+  },
+  headerTitle: {
+    fontSize: 26,
     fontWeight: '700',
     color: theme.colors.onBackground,
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  subtitle: {
-    color: theme.colors.outline,
+  headerSubtitle: {
+    color: theme.colors.onSurfaceVariant,
+    fontSize: 14,
+  },
+  searchCard: {
+    borderRadius: commonRadius.xxl,
+    marginBottom: commonSpacing.md,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
+  },
+  searchContent: {
+    paddingVertical: commonSpacing.sm,
   },
   searchBar: {
-    marginHorizontal: 16,
-    marginBottom: 16,
-    borderRadius: 12,
-    elevation: 2,
+    marginBottom: commonSpacing.sm,
     backgroundColor: theme.colors.surface,
   },
-  scrollView: {
-    flex: 1,
-    paddingHorizontal: 16,
+  searchOutline: {
+    borderRadius: commonRadius.xl,
   },
-  emptyCard: {
-    marginTop: 40,
-    borderRadius: 12,
-    elevation: 2,
-    backgroundColor: theme.colors.surface,
-  },
-  emptyContent: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    fontWeight: '600',
-    color: theme.colors.onSurface,
-    marginBottom: 8,
-  },
-  emptyText: {
-    color: theme.colors.outline,
-    textAlign: 'center',
-    paddingHorizontal: 20,
+  resultsMeta: {
+    color: theme.colors.onSurfaceVariant,
+    fontSize: 12,
   },
   dayCard: {
-    marginBottom: 12,
-    borderRadius: 12,
-    elevation: 3,
+    marginBottom: commonSpacing.md,
+    borderRadius: commonRadius.xxl,
+    elevation: 1,
     backgroundColor: theme.colors.surface,
-  },
-  collapsedView: {
-    gap: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
   },
   dayHeaderRow: {
     flexDirection: 'row',
@@ -535,225 +505,136 @@ const createStyles = (theme: any) => StyleSheet.create({
   },
   dayInfo: {
     flex: 1,
-    gap: 8,
   },
   dayTitle: {
     fontWeight: '700',
     color: theme.colors.primary,
     textTransform: 'capitalize',
+    fontSize: 21,
+    marginBottom: commonSpacing.xs,
   },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  sessionsChip: {
-    backgroundColor: theme.colors.primaryContainer,
-  },
-  chipText: {
-    fontSize: 12,
-    color: theme.colors.primary,
-    fontWeight: '600',
-  },
-  expandIcon: {
-    fontSize: 20,
-    color: theme.colors.primary,
-    fontWeight: '700',
-    marginLeft: 12,
-  },
-  balanceSummary: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surfaceVariant,
-    padding: 16,
-    borderRadius: 10,
-  },
-  balanceSummaryLabel: {
-    fontSize: 15,
-    fontWeight: '600',
+  daySummary: {
     color: theme.colors.onSurfaceVariant,
+    fontSize: 14,
+    marginTop: commonSpacing.xs,
   },
-  balanceSummaryValue: {
-    fontSize: 22,
-    fontWeight: '700',
+  dayMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: commonSpacing.sm,
+    marginTop: commonSpacing.xs,
   },
-  expandDivider: {
-    marginVertical: 16,
-    backgroundColor: theme.colors.outline,
-  },
-  sessionsTitle: {
-    fontWeight: '600',
-    color: theme.colors.onSurface,
-    marginBottom: 12,
-  },
-  sessionCard: {
-    marginBottom: 12,
-    borderRadius: 10,
+  metaChip: {
+    backgroundColor: theme.colors.surfaceVariant,
+    borderColor: theme.colors.outlineVariant,
     borderWidth: 1,
-    borderColor: theme.colors.outline,
-    backgroundColor: theme.colors.surface,
   },
-  sessionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    flexWrap: 'wrap',
-    gap: 8,
+  metaChipText: {
+    color: theme.colors.onSurfaceVariant,
+    fontSize: 13,
+    fontWeight: '600',
   },
-  sessionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
-    flexWrap: 'wrap',
+  dayBalanceChip: {
+    backgroundColor: theme.colors.surfaceVariant,
+    borderColor: theme.colors.outlineVariant,
+    borderWidth: 1,
+    borderRadius: commonRadius.xl,
+    paddingHorizontal: commonSpacing.md,
+    paddingVertical: commonSpacing.xs,
+    justifyContent: 'center',
   },
-  sessionBadge: {
-    backgroundColor: theme.colors.primary,
-    height: 28,
-  },
-  sessionBadgeText: {
+  dayBalanceLabel: {
+    color: theme.colors.onSurfaceVariant,
     fontSize: 12,
-    color: theme.colors.onPrimary,
-    fontWeight: '700',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 2,
   },
-  manualChip: {
-    backgroundColor: theme.colors.secondaryContainer,
-    height: 28,
+  dayBalanceValue: {
+    color: theme.colors.success,
+    fontSize: 23,
+    fontWeight: '800',
+    lineHeight: 27,
   },
-  automatedChip: {
-    backgroundColor: theme.colors.tertiaryContainer,
-    height: 28,
-  },
-  typeChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  sessionTime: {
-    fontSize: 14,
-    color: theme.colors.outline,
-    fontWeight: '500',
-  },
-  sessionActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  concentrationChip: {
-    backgroundColor: theme.colors.warningContainer || '#FFF3E0',
-    height: 28,
-  },
-  concentrationText: {
-    fontSize: 12,
-    color: theme.colors.warning,
-    fontWeight: '700',
-  },
-  actionButton: {
+  expandIconButton: {
     margin: 0,
+    marginLeft: 10,
   },
-  sessionData: {
-    gap: 12,
+  recordCardInner: {
+    marginBottom: commonSpacing.md,
+    borderRadius: commonRadius.xl,
+    padding: commonSpacing.sm,
+    borderColor: theme.colors.outlineVariant,
   },
-  dataRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  dataItem: {
-    flex: 1,
-    backgroundColor: theme.colors.surfaceVariant,
-    padding: 12,
-    borderRadius: 8,
-  },
-  dataLabel: {
-    fontSize: 12,
-    color: theme.colors.onSurfaceVariant,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  dataValue: {
-    fontSize: 16,
-    color: theme.colors.onSurface,
-    fontWeight: '600',
-  },
-  ufContainer: {
+  recordHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: theme.colors.primaryContainer,
-    padding: 12,
-    borderRadius: 8,
+    marginBottom: commonSpacing.md,
   },
-  ufLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.onPrimaryContainer,
-  },
-  ufValue: {
-    fontSize: 16,
-    fontWeight: '700',
+  recordInfo: { flex: 1 },
+  recordType: { 
+    fontWeight: '700', 
     color: theme.colors.primary,
+    fontSize: 18,
+    marginBottom: commonSpacing.xs,
   },
-  balanceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surfaceVariant,
-    padding: 12,
-    borderRadius: 8,
+  recordDate: { 
+    color: theme.colors.onSurfaceVariant, 
+    fontSize: 15,
+    fontWeight: '500',
   },
-  balanceLabel: {
+  recordActions: { flexDirection: 'row', alignItems: 'center' },
+  divider: { marginVertical: commonSpacing.md, backgroundColor: theme.colors.outlineVariant },
+  detailsSection: { 
+    backgroundColor: theme.colors.surfaceVariant, 
+    borderRadius: commonRadius.lg, 
+    padding: commonSpacing.md,
+    marginTop: commonSpacing.md,
+    gap: commonSpacing.sm,
+  },
+  detailLabel: {
+    fontSize: 16,
+    color: theme.colors.onSurface,
+    marginBottom: commonSpacing.xs,
+  },
+  detailValue: { 
+    fontWeight: '700', 
+    color: theme.colors.primary,
+    fontSize: 16,
+  },
+  entriesContainer: { 
+    backgroundColor: theme.colors.surfaceVariant, 
+    borderRadius: commonRadius.lg, 
+    padding: commonSpacing.md,
+    marginTop: commonSpacing.md,
+  },
+  observationsSection: { marginTop: commonSpacing.md },
+  observationText: { 
+    fontSize: 15,
+    color: theme.colors.onSurface,
+    lineHeight: 22,
+  },
+  dialogField: {
+    marginBottom: commonSpacing.sm,
+  },
+  dialogFieldLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: theme.colors.onSurfaceVariant,
-  },
-  balanceValue: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  observationContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: theme.colors.warningContainer || '#FFF9C4',
-    borderRadius: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: theme.colors.warning,
-  },
-  observationLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.warning,
-    marginBottom: 4,
-  },
-  observationText: {
-    fontSize: 14,
-    color: theme.colors.onSurface,
-    lineHeight: 20,
-  },
-  bottomSpacer: {
-    height: 20,
-  },
-  dialogLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.onSurface,
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  concentrationButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  concentrationOption: {
-    flex: 1,
-  },
-  concentrationOptionSelected: {
-    backgroundColor: theme.colors.primary,
-  },
-  concentrationOptionText: {
-    fontWeight: '600',
+    marginBottom: 6,
   },
   dialogInput: {
-    marginBottom: 12,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
+    borderRadius: commonRadius.lg,
+    overflow: 'hidden',
+    minHeight: 52,
   },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 100 },
+  emptyText: { color: theme.colors.outline, marginBottom: commonSpacing.lg, textAlign: 'center' },
+  navigateButton: { borderRadius: commonRadius.xl },
+  bottomSpacer: { height: commonSpacing.xl },
 });

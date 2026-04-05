@@ -1,36 +1,79 @@
 import React, { useState } from 'react';
-import { View, ScrollView, StyleSheet, Alert } from 'react-native';
-import { Button, Text, TextInput, Card, Divider } from 'react-native-paper';
+import { View, StyleSheet } from 'react-native';
+import { Button, Text, Card, Divider } from 'react-native-paper';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { DialysisRecord } from '../types/index';
 import { saveRecord } from '../utils/storage';
 import { useAppTheme } from '../utils/ThemeContext';
+import { FormField } from '../components/FormField';
+import { DatePickerCard } from '../components/DatePickerCard';
+import { BalanceDisplay } from '../components/BalanceDisplay';
+import { FadeInView } from '../components/FadeInView';
+import { useToast, Toast } from '../components/Toast';
+import { ScreenScaffold } from '../components/ScreenScaffold';
+import { validators } from '../utils/validators';
+import { commonSpacing, commonRadius } from '../utils/themeStyles';
+
+const PD_REFERENCE_INFUSION = 2000;
 
 export const AutomatedDialysisScreen = ({ navigation }: { navigation: any }) => {
   const { theme } = useAppTheme();
+  const toast = useToast();
   const [date, setDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   
-  // Campos según la máquina
-  const [firstDrainage, setFirstDrainage] = useState(''); // P.D
-  const [infusion, setInfusion] = useState(''); // INF
-  const [drainage, setDrainage] = useState(''); // DREN
-  const [uf, setUF] = useState(''); // UF (ultrafiltrado) - Este ES el balance
+  // Campos con seguimiento de errores
+  const [firstDrainage, setFirstDrainage] = useState('');
+  const [firstDrainageError, setFirstDrainageError] = useState<string>();
+  
+  const [infusion, setInfusion] = useState('');
+  const [infusionError, setInfusionError] = useState<string>();
+  
+  const [drainage, setDrainage] = useState('');
+  const [drainageError, setDrainageError] = useState<string>();
+  
+  const [uf, setUF] = useState('');
+  const [ufError, setUFError] = useState<string>();
+  
   const [observations, setObservations] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const getBalanceColor = (balance: number): string => {
-    if (balance > 0) return theme.colors.success;
-    if (balance < 0) return theme.colors.error;
-    return theme.colors.outline;
-  };
+  const firstDrainageValue = Number(validators.normalizeNumericInput(firstDrainage));
+  const pdBalance = !isNaN(firstDrainageValue) ? PD_REFERENCE_INFUSION - firstDrainageValue : null;
+
+  const ufValue = Number(validators.normalizeNumericInput(uf));
+  const signedUF = !isNaN(ufValue) && uf.trim() !== '' ? ufValue : null;
+  const totalBalance = pdBalance !== null && signedUF !== null ? pdBalance + signedUF : null;
 
   const saveEntry = async () => {
-    // Validaciones
-    if (!firstDrainage || !infusion || !drainage || !uf) {
-      Alert.alert('Campos requeridos', 'Por favor complete todos los campos: P.D, Infusión, Drenaje y UF');
+    // Validar todos los campos
+    const pdVal = validators.nonNegativeNumber(firstDrainage, 'P.D');
+    const infVal = validators.positiveNumber(infusion, 'Infusión');
+    const drainVal = validators.positiveNumber(drainage, 'Drenaje');
+    const ufVal = validators.signedNumber(uf, 'UF');
+    const coherenceVal = validators.coherenceAutomated(firstDrainage, infusion, drainage);
+    const observationsVal = validators.observations(observations);
+
+    setFirstDrainageError(pdVal.error);
+    setInfusionError(infVal.error);
+    setDrainageError(drainVal.error || (coherenceVal.valid ? undefined : coherenceVal.error));
+    setUFError(ufVal.error);
+
+    if (!pdVal.valid || !infVal.valid || !drainVal.valid || !ufVal.valid || !coherenceVal.valid || !observationsVal.valid) {
+      toast.showToast(
+        pdVal.error ||
+          infVal.error ||
+          drainVal.error ||
+          ufVal.error ||
+          coherenceVal.error ||
+          observationsVal.error ||
+          'Por favor corrige los errores',
+        'error'
+      );
       return;
     }
 
+    setLoading(true);
     try {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -43,24 +86,31 @@ export const AutomatedDialysisScreen = ({ navigation }: { navigation: any }) => 
       const seconds = String(now.getSeconds()).padStart(2, '0');
       const timestamp = `${dateOnly}T${hours}:${minutes}:${seconds}`;
 
-      const ufValue = parseFloat(uf);
+      const firstDrainageNum = Number(validators.normalizeNumericInput(firstDrainage));
+      const ufValue = Number(validators.normalizeNumericInput(uf));
+      const pdBalanceValue = PD_REFERENCE_INFUSION - firstDrainageNum;
+      const totalBalanceValue = pdBalanceValue + ufValue;
 
       const record: DialysisRecord = {
         id: Date.now().toString() + Math.random(),
         type: 'automated',
-        bagType: 1.5, // No aplica para APD, pero requerido por el tipo
-        infusion: parseFloat(infusion),
-        drainage: parseFloat(drainage),
-        balance: ufValue, // El balance ES el UF
-        firstDrainage: parseFloat(firstDrainage),
+        bagType: 1.5,
+        infusion: Number(validators.normalizeNumericInput(infusion)),
+        drainage: Number(validators.normalizeNumericInput(drainage)),
+        balance: totalBalanceValue,
+        firstDrainage: firstDrainageNum,
+        pdBalance: pdBalanceValue,
         uf: ufValue,
         observations: observations,
         timestamp: timestamp,
       };
 
-      await saveRecord(record);
+      const saved = await saveRecord(record);
+      if (!saved) {
+        throw new Error('No se pudo guardar el registro');
+      }
 
-      Alert.alert('Registro exitoso', 'Los datos han sido guardados correctamente');
+      toast.showToast('✓ Registro guardado correctamente', 'success');
       
       // Limpiar formulario
       setFirstDrainage('');
@@ -68,337 +118,291 @@ export const AutomatedDialysisScreen = ({ navigation }: { navigation: any }) => 
       setDrainage('');
       setUF('');
       setObservations('');
+      navigation.navigate('History');
     } catch (error) {
-      Alert.alert('Error', 'Error al guardar el registro');
+      toast.showToast('Error al guardar el registro', 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
   const styles = createStyles(theme);
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Selector de Fecha */}
-      <Card style={styles.dateCard}>
-        <Card.Content style={styles.dateContent}>
-          <View style={styles.dateHeader}>
-            <Text variant="titleMedium" style={styles.dateLabel}>📅 Fecha de la Sesión</Text>
-          </View>
-          <Button
-            mode="contained-tonal"
-            onPress={() => setShowDatePicker(true)}
-            style={styles.dateButton}
-            contentStyle={styles.dateButtonContent}
-          >
-            {date.toLocaleDateString('es-ES', { 
-              weekday: 'long', 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric' 
-            })}
-          </Button>
-        </Card.Content>
-      </Card>
+    <ScreenScaffold contentContainerStyle={styles.contentContainer}>
+      <FadeInView delay={20} offsetY={8}>
+        <View style={styles.headerBlock}>
+          <Text variant="headlineSmall" style={styles.headerTitle}>
+            Registro APD
+          </Text>
+          <Text style={styles.headerSubtitle}>
+            Completa los valores de la cicladora para calcular el balance de la sesión.
+          </Text>
+        </View>
+      </FadeInView>
 
-      {showDatePicker && (
-        <DateTimePicker
-          value={date}
-          mode="date"
-          display="default"
-          onChange={(event: any, selectedDate?: Date) => {
-            setShowDatePicker(false);
-            if (selectedDate) {
-              setDate(selectedDate);
-            }
-          }}
+      <FadeInView delay={40} offsetY={8}>
+        <DatePickerCard 
+          date={date}
+          onPress={() => setShowDatePicker(true)}
+          theme={theme}
+          title="Fecha de sesión"
         />
-      )}
+      </FadeInView>
 
-      {/* Título */}
-      <Text variant="titleMedium" style={styles.sectionTitle}>
-        🤖 Diálisis Automatizada (APD)
-      </Text>
+        {showDatePicker && (
+          <DateTimePicker
+            value={date}
+            mode="date"
+            display="default"
+            onChange={(event: any, selectedDate?: Date) => {
+              setShowDatePicker(false);
+              if (selectedDate) {
+                setDate(selectedDate);
+              }
+            }}
+          />
+        )}
 
-      {/* Tarjeta Principal */}
-      <Card style={styles.mainCard} mode="elevated">
-        <Card.Content>
-          <Text variant="titleSmall" style={styles.cardTitle}>
-            Datos de la Máquina
-          </Text>
-          <Text variant="bodySmall" style={styles.cardSubtitle}>
-            Ingrese los valores mostrados al finalizar el ciclo
-          </Text>
+      <FadeInView delay={90} offsetY={12}>
+        <Card style={styles.mainCard} mode="elevated">
+          <Card.Content>
+            <Text variant="titleSmall" style={styles.cardTitle}>
+              Datos de la cicladora
+            </Text>
+            <Text variant="bodySmall" style={styles.cardSubtitle}>
+              Usa los valores mostrados al finalizar el ciclo
+            </Text>
 
-          <Divider style={styles.divider} />
+            <Divider style={styles.divider} />
 
-          {/* P.D (Primer Drenaje) */}
-          <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>💧 P.D - Primer Drenaje (ml)</Text>
-            <TextInput
+            <FormField 
+              label="P.D - Primer drenaje (ml)"
               value={firstDrainage}
               onChangeText={setFirstDrainage}
+              error={firstDrainageError}
               keyboardType="numeric"
               placeholder="0"
-              mode="outlined"
-              style={styles.input}
-              left={<TextInput.Icon icon="water-minus" />}
+              theme={theme}
+              icon="water-minus"
             />
-          </View>
 
-          {/* INF (Infusión Total) */}
-          <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>💉 INF - Infusión Total (ml)</Text>
-            <TextInput
+            <FormField 
+              label="INF - Infusión total (ml)"
               value={infusion}
               onChangeText={setInfusion}
+              error={infusionError}
               keyboardType="numeric"
               placeholder="0"
-              mode="outlined"
-              style={styles.input}
-              left={<TextInput.Icon icon="water-plus" />}
+              theme={theme}
+              icon="water-plus"
             />
-          </View>
 
-          {/* DREN (Drenaje Total) */}
-          <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>🧪 DREN - Drenaje Total (ml)</Text>
-            <TextInput
+            <FormField 
+              label="DREN - Drenaje total (ml)"
               value={drainage}
               onChangeText={setDrainage}
+              error={drainageError}
               keyboardType="numeric"
               placeholder="0"
-              mode="outlined"
-              style={styles.input}
-              left={<TextInput.Icon icon="water-check" />}
+              theme={theme}
+              icon="water-check"
             />
-          </View>
 
-          {/* UF (Ultrafiltrado) - Este ES el balance */}
-          <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>💧 UF - Ultrafiltrado/Balance (ml)</Text>
-            <TextInput
+            <FormField 
+              label="UF - Ultrafiltrado / Balance (ml)"
               value={uf}
               onChangeText={setUF}
+              error={ufError}
               keyboardType="numeric"
               placeholder="0"
-              mode="outlined"
-              style={styles.input}
-              left={<TextInput.Icon icon="filter" />}
+              theme={theme}
+              icon="filter"
+              helperText="Ingresa el valor con signo si corresponde (ej: -847)"
             />
-            <Text style={styles.helpText}>
-              Líquido eliminado durante la sesión (este es tu balance)
-            </Text>
-          </View>
 
-          {/* Visualización del Balance (mismo valor que UF) */}
-          {uf !== '' && !isNaN(parseFloat(uf)) && (
-            <View style={styles.balanceContainer}>
-              <Text style={styles.balanceLabel}>⚖️ Balance de la Sesión</Text>
-              <Text
-                style={[
-                  styles.balanceValue,
-                  { color: getBalanceColor(parseFloat(uf)) },
-                ]}
-              >
-                {parseFloat(uf) > 0 ? '+' : ''}
-                {parseFloat(uf)} ml
-              </Text>
-            </View>
-          )}
+            {pdBalance !== null && (
+              <View style={styles.balanceDisplayContainer}>
+                <BalanceDisplay
+                  balance={pdBalance}
+                  label={`Balance P.D. (ref ${PD_REFERENCE_INFUSION} ml)`}
+                  theme={theme}
+                  size="small"
+                  polarity="inverted"
+                />
+              </View>
+            )}
 
-          {/* Observaciones */}
-          <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>📝 Observaciones (opcional)</Text>
-            <TextInput
+            {totalBalance !== null && (
+              <View style={styles.balanceDisplayContainer}>
+                <BalanceDisplay
+                  balance={totalBalance}
+                  label="Balance total de la sesión"
+                  theme={theme}
+                  size="medium"
+                  polarity="inverted"
+                />
+              </View>
+            )}
+
+            <FormField 
+              label="Observaciones (opcional)"
               value={observations}
               onChangeText={setObservations}
               multiline
               numberOfLines={3}
-              mode="outlined"
               placeholder="Notas sobre la sesión..."
-              style={styles.observationsInput}
+              theme={theme}
+              icon="note-text-outline"
             />
-          </View>
-        </Card.Content>
-      </Card>
+          </Card.Content>
+        </Card>
+      </FadeInView>
 
-      {/* Card Informativa */}
-      <Card style={styles.infoCard} mode="outlined">
-        <Card.Content>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoIcon}>ℹ️</Text>
-            <View style={styles.infoTextContainer}>
-              <Text variant="bodySmall" style={styles.infoText}>
-                Los valores deben coincidir con los mostrados en la pantalla de su máquina de diálisis automatizada al finalizar el ciclo. El UF (ultrafiltrado) representa el balance total de la sesión.
-              </Text>
+      <FadeInView delay={150} offsetY={12}>
+        <Card style={styles.infoCard} mode="outlined">
+          <Card.Content>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoIcon}>ℹ</Text>
+              <View style={styles.infoTextContainer}>
+                <Text variant="bodySmall" style={styles.infoText}>
+                  Verifica que los valores coincidan con la pantalla de la máquina al finalizar el ciclo.
+                </Text>
+              </View>
             </View>
-          </View>
-        </Card.Content>
-      </Card>
+          </Card.Content>
+        </Card>
+      </FadeInView>
 
-      {/* Botones de Acción */}
-      <View style={styles.actionButtons}>
+      <FadeInView delay={210} offsetY={10} style={styles.actionButtons}>
         <Button
           mode="contained"
           onPress={saveEntry}
-          icon="content-save"
+          disabled={loading}
+          loading={loading}
+          icon="content-save-outline"
           style={styles.saveButton}
           contentStyle={styles.saveButtonContent}
           labelStyle={styles.saveButtonLabel}
         >
-          Guardar Registro
+          Guardar registro
         </Button>
         <Button
           mode="outlined"
           onPress={() => navigation.navigate('History')}
+          disabled={loading}
           icon="history"
           style={styles.historyButton}
           contentStyle={styles.historyButtonContent}
         >
-          Ver Historial
+          Ver historial
         </Button>
-      </View>
+      </FadeInView>
 
       <View style={styles.bottomSpacer} />
-    </ScrollView>
+
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        action={toast.action}
+        onDismiss={toast.hideToast}
+        theme={theme}
+      />
+    </ScreenScaffold>
   );
 };
 
 const createStyles = (theme: any) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.background,
-    padding: 12,
+  contentContainer: {
+    paddingBottom: commonSpacing.xxl,
   },
-  dateCard: {
-    marginBottom: 16,
-    borderRadius: 12,
-    elevation: 2,
-    backgroundColor: theme.colors.surface,
+  headerBlock: {
+    marginBottom: commonSpacing.xs,
   },
-  dateContent: {
-    paddingVertical: 12,
-  },
-  dateHeader: {
-    marginBottom: 8,
-  },
-  dateLabel: {
-    fontWeight: '600',
-    color: theme.colors.primary,
-  },
-  dateButton: {
-    borderRadius: 8,
-  },
-  dateButtonContent: {
-    paddingVertical: 6,
-  },
-  sectionTitle: {
-    marginBottom: 12,
-    marginTop: 4,
-    fontWeight: '600',
+  headerTitle: {
     color: theme.colors.onBackground,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  headerSubtitle: {
+    color: theme.colors.onSurfaceVariant,
+    lineHeight: 20,
+    marginTop: 4,
   },
   mainCard: {
-    marginBottom: 16,
-    borderRadius: 12,
-    elevation: 3,
+    marginBottom: commonSpacing.lg,
+    borderRadius: commonRadius.xxl,
+    elevation: 1,
     backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
   },
   cardTitle: {
-    fontWeight: '600',
+    fontWeight: '700',
     color: theme.colors.primary,
-    marginBottom: 4,
+    marginBottom: commonSpacing.xs,
   },
   cardSubtitle: {
-    color: theme.colors.outline,
-    marginBottom: 12,
+    color: theme.colors.onSurfaceVariant,
+    marginBottom: commonSpacing.md,
   },
   divider: {
-    marginBottom: 16,
-    backgroundColor: theme.colors.outline,
+    marginBottom: commonSpacing.lg,
+    backgroundColor: theme.colors.outlineVariant,
   },
-  fieldContainer: {
-    marginBottom: 16,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: theme.colors.outline,
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: theme.colors.surface,
-  },
-  helpText: {
-    fontSize: 11,
-    color: theme.colors.outline,
-    fontStyle: 'italic',
-    marginTop: 4,
-  },
-  balanceContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  balanceDisplayContainer: {
+    marginTop: commonSpacing.xs,
+    marginBottom: commonSpacing.sm,
+    paddingHorizontal: commonSpacing.sm,
     alignItems: 'center',
-    backgroundColor: theme.colors.surfaceVariant,
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  balanceLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: theme.colors.onSurfaceVariant,
-  },
-  balanceValue: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  observationsInput: {
-    backgroundColor: theme.colors.surface,
   },
   infoCard: {
-    marginBottom: 20,
-    borderRadius: 12,
-    backgroundColor: theme.colors.primaryContainer + '40',
-    borderColor: theme.colors.primary,
+    marginBottom: commonSpacing.xl,
+    borderRadius: commonRadius.xxl,
+    backgroundColor: theme.colors.primaryContainer + '30',
+    borderColor: theme.colors.outlineVariant,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
   infoIcon: {
-    fontSize: 20,
-    marginRight: 12,
+    fontSize: 24,
+    marginRight: commonSpacing.md,
+    color: theme.colors.primary,
+    fontWeight: '700',
   },
   infoTextContainer: {
     flex: 1,
   },
   infoText: {
     color: theme.colors.onSurface,
-    lineHeight: 18,
+    lineHeight: 19,
   },
   actionButtons: {
-    gap: 12,
-    marginBottom: 8,
+    gap: commonSpacing.md,
+    marginBottom: commonSpacing.md,
   },
   saveButton: {
-    borderRadius: 10,
-    elevation: 3,
+    borderRadius: commonRadius.xxl,
+    elevation: 1,
   },
   saveButtonContent: {
-    paddingVertical: 10,
+    height: 50,
   },
   saveButtonLabel: {
     fontSize: 16,
     fontWeight: '600',
   },
   historyButton: {
-    borderRadius: 10,
+    borderRadius: commonRadius.xxl,
     borderColor: theme.colors.primary,
   },
   historyButtonContent: {
-    paddingVertical: 10,
+    height: 50,
   },
   bottomSpacer: {
-    height: 20,
+    height: commonSpacing.xl,
   },
 });
